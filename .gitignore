@@ -1,0 +1,7 @@
+.vscode
+.vagrant
+.ssh
+pkg
+info
+target
+download
