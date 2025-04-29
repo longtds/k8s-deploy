@@ -1,58 +1,18 @@
 #!/bin/bash
 # shellcheck disable=SC2087,SC2086,SC2206,SC2016,SC1091,SC2154
 
-if [ -f config.ini ]; then
-    source config.ini
+if [ -f utils.sh ]; then
+    source utils.sh
 else
-    echo "Configuration file config.ini not found."
+    echo "file utils.sh not found."
     exit 1
 fi
 
-set +e
-set -o noglob
-
-bold=$(tput bold)
-underline=$(tput sgr 0 1)
-reset=$(tput sgr0)
-red=$(tput setaf 1)
-green=$(tput setaf 76)
-white=$(tput setaf 7)
-tan=$(tput setaf 202)
-blue=$(tput setaf 25)
-
-underline() {
-    printf "${underline}${bold}%s${reset}\n" "$@"
-}
-h1() {
-    printf "\n${underline}${bold}${blue}%s${reset}\n" "$@"
-}
-h2() {
-    printf "\n${underline}${bold}${white}%s${reset}\n" "$@"
-}
-debug() {
-    printf "${white}%s${reset}\n" "$@"
-}
-info() {
-    printf "${white}➜ %s${reset}\n" "$@"
-}
-success() {
-    printf "$(TZ=UTC-8 date +%Y-%m-%d" "%H:%M:%S) ${green}✔ %s${reset}\n" "$@"
-}
-error() {
-    printf "${red}✖ %s${reset}\n" "$@"
-    exit 2
-}
-warn() {
-    printf "${tan}➜ %s${reset}\n" "$@"
-}
-bold() {
-    printf "${bold}%s${reset}\n" "$@"
-}
-note() {
-    printf "\n${underline}${bold}${blue}Note:${reset} ${blue}%s${reset}\n" "$@"
-}
-
-set -e
+if [ -f config.ini ]; then
+    source config.ini
+else
+    error "file config.ini not found."
+fi
 
 if [ ${#node_ip[@]} -ge 3 ]; then
     master_node=(${node_ip[0]} ${node_ip[1]} ${node_ip[2]})
@@ -292,7 +252,7 @@ systemctl restart systemd-modules-load.service"
 
 }
 
-function download_pkg {
+function download_pkg() {
     file_name="$1"
 
     if [ ! -d ${pkg_path} ]; then mkdir -p ${pkg_path}; fi
@@ -1677,7 +1637,7 @@ function install_localpath() {
     fi
 
     if sed -e "s#Placeholder_registry#${registry}#g" \
-        -e "s#Placeholder_pvc_path#${pvc_path}#g" \
+        -e "s#Placeholder_local_path#${local_path}#g" \
         ${pkg_path}/${localpath_pkg} | ${bin_path}/kubectl apply -f -; then
         success "install local-path-provisioner successfully"
     fi
