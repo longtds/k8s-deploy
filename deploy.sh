@@ -26,252 +26,7 @@ node_ip_hostname=(${node_ip[@]} ${node_hostname[@]})
 addnode_ip_hostname=(${addnode_ip[@]} ${addnode_hostname[@]})
 registry=${node_ip[0]}:5000
 
-function remote_exec() {
-    local host=$1
-    local cmd=$2
-    if ! ssh -p ${ssh_port} ${user}@${host} "${cmd}" >/dev/null 2>&1; then
-        error "Execute command failed on ${host}: ${cmd}"
-    fi
-}
-
-function remote_cp() {
-    local src=$1
-    local dst=$2
-    if ! scp -P ${ssh_port} ${src} ${user}@${dst} >/dev/null 2>&1; then
-        error "Copy ${src} to ${dst} failed"
-    fi
-}
-
-function sync_hosts() {
-    # Sync /etc/hosts
-    args=($@)
-    num=$#
-    for ((i = 0; i < num; i++)); do
-        if remote_cp "/etc/hosts" "${args[${i}]}:/etc/hosts"; then
-            success "copy hosts to ${args[${i}]} successfully"
-        fi
-    done
-}
-
-function config_system() {
-    args=($@)
-    num=$#
-    ((num /= 2))
-
-    # Set hostname
-    for ((i = 0; i < num; i++)); do
-        ((num2 = num + i))
-
-        command="hostnamectl set-hostname ${args[${num2}]}"
-
-        if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set hostname successfully"
-        fi
-
-        sed -i -e "/^${args[${i}]}/d" /etc/hosts
-        echo "${args[${i}]} ${args[${num2}]}" >>/etc/hosts
-    done
-
-    # Sync /etc/hosts
-    for ((i = 0; i < num; i++)); do
-        if remote_cp "/etc/hosts" "${args[${i}]}:/etc/hosts"; then
-            success "copy hosts to ${args[${i}]} successfully"
-        fi
-    done
-
-    # Set kernel parameters
-    command="cat >/etc/sysctl.d/kubernetes.conf <<EOF
-fs.inotify.max_user_watches = 65536
-fs.file-max = 107374181600
-vm.panic_on_oom = 0
-vm.max_map_count = 262144
-net.bridge.bridge-nf-call-iptables = 1
-net.bridge.bridge-nf-call-ip6tables = 1
-net.netfilter.nf_conntrack_max = 2621440
-net.ipv4.ip_forward = 1
-net.ipv4.tcp_keepalive_time = 600
-net.ipv4.tcp_keepalive_probes = 3
-net.ipv4.tcp_keepalive_intvl = 15
-net.ipv4.tcp_max_tw_buckets = 32768
-net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_max_orphans = 32768
-net.ipv4.tcp_orphan_retries = 3
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_max_syn_backlog = 16384
-net.ipv4.tcp_timestamps = 0
-net.core.somaxconn = 16384
-EOF
-sysctl --system"
-
-    for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set kernel successfully"
-        fi
-    done
-
-    # Set SElinux
-    command="if [ -f /etc/selinux/config ]; then
-    if [ \$(getenforce) != \"Disabled\" ]; then
-        setenforce 0 && sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
-    fi
-fi"
-
-    for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set selinux successfully"
-        fi
-    done
-
-    # Set firewalld
-    command="if systemctl list-units | grep firewalld; then
-    systemctl disable firewalld --now
-fi
-if systemctl list-units | grep ufw; then
-    ufw disable
-    systemctl disable ufw --now
-fi"
-
-    for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set firewalld successfully"
-        fi
-    done
-
-    # Set swap
-    command="swapoff -a
-sed -ri 's/.*swap.*/#&/' /etc/fstab"
-
-    for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set swapoff successfully"
-        fi
-    done
-
-    # Set nofile limits
-    command="ulimit -SHn 655360
-ulimit -SHu 65536
-cat > /etc/security/limits.conf <<EOF
-* soft nofile 655360
-* hard nofile 655360
-* soft nproc 65536
-* hard nproc 65536
-* soft memlock unlimited
-* hard memlock unlimited
-EOF"
-
-    for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set nofile ulimit successfully"
-        fi
-    done
-
-    # Set timezone
-    command="ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
-echo 'Asia/Shanghai' >/etc/timezone"
-
-    for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set timezone successfully"
-        fi
-    done
-
-    # Set ntp
-    command="if [ -f /etc/chrony.conf ]; then
-    sed -i '/^#allow/c\allow 0.0.0.0/0' /etc/chrony.conf
-    systemctl restart chronyd
-    systemctl enable chronyd
-fi"
-
-    if remote_exec ${node_ip[0]} "${command}"; then
-        success "${node_ip[0]} set ntp successfully"
-    fi
-
-    if [ $num -gt 1 ]; then
-        command="if [ -f /etc/chrony.conf ]; then
-    sed -i -e \"/^pool/c\server ${node_ip[0]} iburst\" /etc/chrony.conf
-    systemctl restart chronyd
-    systemctl enable chronyd
-fi"
-
-        for ((i = 1; i < num; i++)); do
-            if remote_exec ${args[${i}]} "${command}"; then
-                success "${args[${i}]} set ntp successfully"
-            fi
-        done
-    fi
-
-    # Set k8s modules
-    command="cat >> /etc/modules-load.d/kubernetes.conf <<EOF 
-overlay
-br_netfilter
-EOF
-systemctl daemon-reload
-systemctl restart systemd-modules-load.service"
-
-    for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set k8s modules successfully"
-        fi
-    done
-
-    # Set ipvs
-    if [ ${kubeproxy_mode} == "ipvs" ]; then
-        command="cat >> /etc/modules-load.d/ipvs.conf <<EOF 
-ip_vs
-ip_vs_lc
-ip_vs_wlc
-ip_vs_rr
-ip_vs_wrr
-ip_vs_lblc
-ip_vs_lblcr
-ip_vs_dh
-ip_vs_sh
-ip_vs_fo
-ip_vs_nq
-ip_vs_sed
-ip_vs_ftp
-ip_vs_sh
-nf_conntrack
-ip_tables
-ip_set
-xt_set
-ipt_set
-ipt_rpfilter
-ipt_REJECT
-ipip
-EOF
-systemctl daemon-reload
-systemctl restart systemd-modules-load.service"
-
-        for ((i = 0; i < num; i++)); do
-            if remote_exec ${args[${i}]} "${command}"; then
-                success "${args[${i}]} set ipvs modules successfully"
-            fi
-        done
-    fi
-
-}
-
-function download_pkg() {
-    file_name="$1"
-
-    if [ ! -d ${pkg_path} ]; then mkdir -p ${pkg_path}; fi
-    curl -L --progress-bar "${pkg_url}/${file_name}" -o "${pkg_path}/${file_name}"
-    return $?
-}
-
 function config_certs() {
-    if [ ! -f ${pkg_path}/${cfssl_pkg} ]; then
-        note "not found ${cfssl_pkg}, start downloading ..."
-        download_pkg ${cfssl_pkg}
-    fi
-
-    if [ ! -d ${bin_path} ]; then mkdir -p ${bin_path}; fi
-
-    if tar xf ${pkg_path}/${cfssl_pkg} -C ${bin_path}; then
-        success "decompress ${pkg_path}/${cfssl_pkg} successfully"
-    fi
-
     if [ ! -d ${run_path}/pki ]; then
         mkdir -p ${run_path}/pki
     fi
@@ -342,11 +97,11 @@ EOF
 }
 EOF
 
-    chmod 755 -R ${run_path}/pkg
-    if ${bin_path}/cfssl gencert -initca ca-csr.json | ${bin_path}/cfssljson -bare ca; then
+    chmod 755 -R ${pkg_bin_path}
+    if ${pkg_bin_path}/cfssljson gencert -initca ca-csr.json | ${pkg_bin_path}/cfssljson -bare ca; then
         success "create k8s ca certificate successfully"
     fi
-    if ${bin_path}/cfssl gencert -initca etcd-ca-csr.json | ${bin_path}/cfssljson -bare etcd-ca; then
+    if ${pkg_bin_path}/cfssl gencert -initca etcd-ca-csr.json | ${pkg_bin_path}/cfssljson -bare etcd-ca; then
         success "create etcd ca certificate successfully"
     fi
 
@@ -402,8 +157,8 @@ EOF
 EOF
     fi
 
-    if ${bin_path}/cfssl gencert -ca=etcd-ca.pem -ca-key=etcd-ca-key.pem -config=ca-config.json \
-        -profile=kubernetes etcd-csr.json | ${bin_path}/cfssljson -bare etcd; then
+    if ${pkg_bin_path}/cfssl gencert -ca=etcd-ca.pem -ca-key=etcd-ca-key.pem -config=ca-config.json \
+        -profile=kubernetes etcd-csr.json | ${pkg_bin_path}/cfssljson -bare etcd; then
         success "create etcd server certificate successfully"
     fi
 
@@ -475,8 +230,8 @@ EOF
 EOF
     fi
 
-    if ${bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
-        -profile=kubernetes kube-apiserver-csr.json | ${bin_path}/cfssljson -bare kube-apiserver; then
+    if ${pkg_bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes kube-apiserver-csr.json | ${pkg_bin_path}/cfssljson -bare kube-apiserver; then
         success "create kube-apiserver certificate successfully"
     fi
 
@@ -500,8 +255,8 @@ EOF
 }
 EOF
 
-    if ${bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
-        -profile=kubernetes kube-controller-manager-csr.json | ${bin_path}/cfssljson -bare kube-controller-manager; then
+    if ${pkg_bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes kube-controller-manager-csr.json | ${pkg_bin_path}/cfssljson -bare kube-controller-manager; then
         success "create kube-controller-manager certificate successfully"
     fi
 
@@ -525,8 +280,8 @@ EOF
 }
 EOF
 
-    if ${bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
-        -profile=kubernetes kube-scheduler-csr.json | ${bin_path}/cfssljson -bare kube-scheduler; then
+    if ${pkg_bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes kube-scheduler-csr.json | ${pkg_bin_path}/cfssljson -bare kube-scheduler; then
         success "create kube-scheduler certificate successfully"
     fi
 
@@ -549,8 +304,8 @@ EOF
   ]
 }
 EOF
-    if ${bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
-        -profile=kubernetes admin-csr.json | ${bin_path}/cfssljson -bare admin; then
+    if ${pkg_bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes admin-csr.json | ${pkg_bin_path}/cfssljson -bare admin; then
         success "create kube admin certificate successfully"
     fi
 
@@ -573,8 +328,8 @@ EOF
   ]
 }
 EOF
-    if ${bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
-        -profile=kubernetes kube-proxy-csr.json | ${bin_path}/cfssljson -bare kube-proxy; then
+    if ${pkg_bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes kube-proxy-csr.json | ${pkg_bin_path}/cfssljson -bare kube-proxy; then
         success "create kube-proxy certificate successfully"
     fi
 
@@ -597,8 +352,8 @@ EOF
   ]
 }
 EOF
-    if ${bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
-        -profile=kubernetes proxy-client-csr.json | ${bin_path}/cfssljson -bare proxy-client; then
+    if ${pkg_bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes proxy-client-csr.json | ${pkg_bin_path}/cfssljson -bare proxy-client; then
         success "create proxy-client certificate successfully"
     fi
 
@@ -629,31 +384,31 @@ EOF
   ]
 }
 EOF
-    if ${bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
-        -profile=kubernetes registry-csr.json | ${bin_path}/cfssljson -bare registry; then
+    if ${pkg_bin_path}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes registry-csr.json | ${pkg_bin_path}/cfssljson -bare registry; then
         success "create registry certificate successfully"
     fi
 
-    if [ -f ${pkg_path:?}/${cert_file} ]; then rm ${pkg_path:?}/${cert_file} -rf; fi
-
-    cd ${run_path} && tar zcf ${pkg_path}/${cert_file} pki
+    cd ${run_path}
 }
 
-function sync_pkg() {
+function sync_certs() {
     args=($@)
     num=$#
 
-    if [ ! -f ${pkg_path}/${cert_file} ]; then config_certs; fi
-
+    command1="mkdir -p ${cfg_path}/pki"
     for ((i = 0; i < num; i++)); do
-        if remote_cp "${pkg_path}/${cert_file}" "${args[${i}]}:/tmp/${cert_file}"; then
-            success "sync ${cert_file} to ${args[${i}]} successfully"
+        if remote_exec ${args[${i}]} "${command1}"; then
+            success "create ${cfg_path} on ${args[${i}]} successfully"
         fi
 
-        command="mkdir -p ${cfg_path}
-mkdir -p ${bin_path}
-tar xf /tmp/${cert_file} -C ${cfg_path}
-if [ -d /etc/pki/ca-trust ]; then
+        if sync_dir "${run_path}/pki" "${args[${i}]}:${cfg_path}/pki"; then
+            success "sync pki to ${args[${i}]} successfully"
+        fi
+    done
+
+    # Update ca-trust
+    command2="if [ -d /etc/pki/ca-trust ]; then
     if update-ca-trust force-enable; then
         \cp -f ${cfg_path}/pki/ca.pem /etc/pki/ca-trust/source/anchors/k8s-ca.pem
         \cp -f ${cfg_path}/pki/etcd-ca.pem /etc/pki/ca-trust/source/anchors/etcd-ca.pem
@@ -670,87 +425,47 @@ if [ -d /usr/local/share/ca-certificates ]; then
         update-ca-certificates
     fi
 fi"
-        if remote_exec ${args[${i}]} "${command}"; then
-            success "update-ca-trust on ${args[${i}]} successfully"
-        fi
+    if remote_exec ${args[${i}]} "${command2}"; then
+        success "update-ca-trust on ${args[${i}]} successfully"
+    fi
 
-        if [[ ${master_node[*]} =~ ${args[${i}]} ]]; then
-            if [ ! -f ${pkg_path}/${etcd_pkg} ]; then
-                note "not found ${etcd_pkg}, start downloading ..."
-                download_pkg ${etcd_pkg}
-            fi
+}
 
-            command="if [ ! -d ${bin_path} ]; then mkdir -p ${bin_path}; fi
-tar xf /tmp/${etcd_pkg} -C ${bin_path}"
-            if remote_cp "${pkg_path}/${etcd_pkg}" "${args[${i}]}:/tmp/${etcd_pkg}" &&
-                remote_exec ${args[${i}]} "${command}"; then
-                success "sync ${etcd_pkg} to ${args[${i}]} successfully"
-            fi
-        fi
+function sync_pkg() {
+    args=($@)
+    num=$#
 
-        if [ ! -f ${pkg_path}/${kubernetes_pkg} ]; then
-            note "not found ${kubernetes_pkg}, start downloading ..."
-            download_pkg ${kubernetes_pkg}
-        fi
-
-        command="if [ ! -d ${bin_path} ]; then mkdir -p ${bin_path}; fi
-tar xf /tmp/${kubernetes_pkg} -C ${bin_path}"
-        if remote_cp "${pkg_path}/${kubernetes_pkg}" "${args[${i}]}:/tmp/${kubernetes_pkg}" &&
-            remote_exec ${args[${i}]} "${command}"; then
-            success "sync ${kubernetes_pkg} to ${args[${i}]} successfully"
-        fi
-
-        if [ ! -f ${pkg_path}/${haproxy_pkg} ]; then
-            note "not found ${haproxy_pkg}, start downloading ..."
-            download_file ${haproxy_pkg}
-        fi
-
-        if remote_cp "${pkg_path}/${haproxy_pkg}" "${args[${i}]}:/tmp/${haproxy_pkg}"; then
-            success "sync ${haproxy_pkg} to ${args[${i}]} successfully"
-        fi
-
-        if [ ! -f ${pkg_path}/${containerd_pkg} ]; then
-            note "not found ${containerd_pkg}, start downloading ..."
-            download_pkg ${containerd_pkg}
-        fi
-
-        command="tar xf /tmp/${containerd_pkg} -C /
+    command1="mkdir -p ${bin_path}"
+    command2="tar xf /tmp/${containerd_file} -C /
 rm /etc/cni/net.d/10-containerd-net.conflist -rf"
-        if remote_cp "${pkg_path}/${containerd_pkg}" "${args[${i}]}:/tmp/${containerd_pkg}" &&
-            remote_exec ${args[${i}]} "${command}"; then
-            success "sync ${containerd_pkg} to ${args[${i}]} successfully"
+    command3="tar xf /tmp/${image_file} -C ${registry_path}"
+
+    for ((i = 0; i < num; i++)); do
+        if remote_exec ${args[${i}]} "${command1}"; then
+            success "create ${bin_path} on ${args[${i}]} successfully"
         fi
 
-        if [ ! -f ${pkg_path}/${nerdctl_pkg} ]; then
-            note "not found ${nerdctl_pkg}, start downloading ..."
-            download_pkg ${nerdctl_pkg}
+        if sync_dir "${pkg_bin_path}" "${args[${i}]}:${bin_path}"; then
+            success "sync ${pkg_bin_path} to ${args[${i}]} successfully"
         fi
 
-        command="tar xf /tmp/${nerdctl_pkg} -C ${bin_path}"
-        if remote_cp "${pkg_path}/${nerdctl_pkg}" "${args[${i}]}:/tmp/${nerdctl_pkg}" &&
-            remote_exec ${args[${i}]} "${command}"; then
-            success "sync ${nerdctl_pkg} to ${args[${i}]} successfully"
+        if remote_cp "${pkg_image_path}/${haproxy_file}" "${args[${i}]}:/tmp/${haproxy_file}"; then
+            success "copy ${haproxy_file} to ${args[${i}]} successfully"
+        fi
+
+        if remote_cp "${pkg_tgz_path}/${containerd_file}" "${args[${i}]}:/tmp/${containerd_file}"; then
+            remote_exec ${args[${i}]} "${command2}"
+            success "copy ${containerd_file} to ${args[${i}]} successfully"
         fi
 
         if [[ ${master_node[*]} =~ ${args[${i}]} ]]; then
-            if [ ! -f ${pkg_path}/${image_pkg} ]; then
-                note "not found ${image_pkg}, start downloading ..."
-                download_pkg ${image_pkg}
+            if remote_cp "${pkg_image_path}/${image_file}" "${args[${i}]}:/tmp/${image_file}" &&
+                remote_exec ${args[${i}]} "${command3}"; then
+                success "sync ${image_file} to ${args[${i}]} successfully"
             fi
 
-            command="tar xf /tmp/${image_pkg} -C ${base_path}"
-            if remote_cp "${pkg_path}/${image_pkg}" "${args[${i}]}:/tmp/${image_pkg}" &&
-                remote_exec ${args[${i}]} "${command}"; then
-                success "sync ${image_pkg} to ${args[${i}]} successfully"
-            fi
-
-            if [ ! -f ${pkg_path}/${registry_pkg} ]; then
-                note "not found ${registry_pkg}, start downloading ..."
-                download_pkg ${registry_pkg}
-            fi
-
-            if remote_cp "${pkg_path}/${registry_pkg}" "${args[${i}]}:/tmp/${registry_pkg}"; then
-                success "sync ${registry_pkg} to ${args[${i}]} successfully"
+            if remote_cp "${pkg_image_path}/${registry_file}" "${args[${i}]}:/tmp/${registry_file}"; then
+                success "sync ${registry_file} to ${args[${i}]} successfully"
             fi
         fi
     done
@@ -769,8 +484,8 @@ After=network.target
 [Service]
 Type=notify
 ExecStart=${bin_path}/etcd --name=${node_hostname[${nm}]} \
---data-dir=${base_path}/etcd \
---wal-dir=${base_path}/etcd/wal \
+--data-dir=${etcd_data_path} \
+--wal-dir=${etcd_data_path}/wal \
 --listen-peer-urls=https://${i}:2380 \
 --listen-client-urls=https://${i}:2379,http://127.0.0.1:2379 \
 --initial-advertise-peer-urls=https://${i}:2380 \
@@ -821,8 +536,8 @@ After=network.target
 [Service]
 Type=notify
 ExecStart=${bin_path}/etcd --name=${node_hostname[${nm}]} \
---data-dir=${base_path}/etcd \
---wal-dir=${base_path}/etcd/wal \
+--data-dir=${etcd_data_path} \
+--wal-dir=${etcd_data_path}/wal \
 --listen-peer-urls=https://${i}:2380 \
 --listen-client-urls=https://${i}:2379,http://127.0.0.1:2379 \
 --initial-advertise-peer-urls=https://${i}:2380 \
@@ -1062,7 +777,7 @@ function config_apiproxy() {
 
     if [ ${#master_node[@]} -eq 3 ]; then
         command="if ! ${bin_path}/nerdctl ps |grep apiproxy; then
-    ${bin_path}/nerdctl load -i /tmp/${haproxy_pkg}
+    ${bin_path}/nerdctl load -i /tmp/${haproxy_file}
     cat > ${cfg_path}/haproxy.cfg <<EOF
 global
     maxconn 2000
@@ -1217,16 +932,15 @@ systemctl enable kube-scheduler"
 }
 
 function config_kubectl() {
-    if [ ! -f ${bin_path} ]; then mkdir -p ${bin_path}; fi
-
-    if tar xf ${pkg_path}/${kubernetes_pkg} -C ${bin_path}; then
-        success "deploy kubectl locally successfully"
+    if ! whereis kubectl >/dev/null 2>&1; then
+        cp ${pkg_bin_path}/kubectl /usr/local/bin/
+        chmod +x /usr/local/bin/kubectl
+        if ! whereis kubectl >/dev/null 2>&1; then
+            error "install kubectl failed"
+        fi
     fi
 
-    mkdir -p ${cfg_path}
-
-    for i in "${master_node[@]}"; do
-        command="${bin_path}/kubectl config set-cluster kubernetes \
+    command="${bin_path}/kubectl config set-cluster kubernetes \
   --certificate-authority=${cfg_path}/pki/ca.pem \
   --embed-certs=true \
   --server=https://${i}:6443 \
@@ -1245,15 +959,16 @@ ${bin_path}/kubectl config use-context default \
 mkdir -p ~/.kube && \cp ${cfg_path}/admin.kubeconfig ~/.kube/config
 ${bin_path}/kubectl get cs"
 
+    for i in "${master_node[@]}"; do
         if remote_exec ${i} "${command}"; then
             success "set kubeconfig on ${i} successfully"
         fi
     done
 
-    scp -P ${ssh_port} ${user}@${node_ip[0]}:${cfg_path}/admin.kubeconfig ${cfg_path}/admin.kubeconfig
-    mkdir -p /root/.kube && \cp ${cfg_path}/admin.kubeconfig /root/.kube/config
+    scp -P ${ssh_port} ${user}@${node_ip[0]}:${cfg_path}/admin.kubeconfig ${run_path}/admin.kubeconfig
+    mkdir -p /root/.kube && \cp ${run_path}/admin.kubeconfig /root/.kube/config
 
-    if ${bin_path}/kubectl get cs; then
+    if kubectl get cs; then
         success "set kubeconfig on local machine successfully"
     fi
 }
@@ -1265,22 +980,22 @@ function config_kubelet() {
 
     kubelet_bootstrap_kubeconfig=${run_path}/pki/kubelet-bootstrap.kubeconfig
 
-    ${bin_path}/kubectl config set-cluster kubernetes \
+    kubectl config set-cluster kubernetes \
         --certificate-authority=${run_path}/pki/ca.pem \
         --embed-certs=true \
         --server=${apiserver_url} \
         --kubeconfig=${kubelet_bootstrap_kubeconfig}
 
-    ${bin_path}/kubectl config set-credentials kubelet-bootstrap \
+    kubectl config set-credentials kubelet-bootstrap \
         --token=a5587b0a00bbbd5ead752f7074b4f644 \
         --kubeconfig=${kubelet_bootstrap_kubeconfig}
 
-    ${bin_path}/kubectl config set-context default \
+    kubectl config set-context default \
         --cluster=kubernetes \
         --user=kubelet-bootstrap \
         --kubeconfig=${kubelet_bootstrap_kubeconfig}
 
-    ${bin_path}/kubectl config use-context default \
+    kubectl config use-context default \
         --kubeconfig=${kubelet_bootstrap_kubeconfig}
 
     echo 'apiVersion: rbac.authorization.k8s.io/v1
@@ -1295,7 +1010,7 @@ subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: User
     name: kubelet-bootstrap
-' | ${bin_path}/kubectl apply -f -
+' | kubectl apply -f -
 
     echo 'apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -1331,7 +1046,7 @@ subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: User
     name: kubernetes
-' | ${bin_path}/kubectl apply -f -
+' | kubectl apply -f -
 
     echo 'kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1380,7 +1095,7 @@ roleRef:
   kind: ClusterRole
   name: approve-node-server-renewal-csr
   apiGroup: rbac.authorization.k8s.io
-' | ${bin_path}/kubectl apply -f -
+' | kubectl apply -f -
 
     for ((i = 0; i < num; i++)); do
         if remote_cp "${kubelet_bootstrap_kubeconfig}" "${args[${i}]}:${cfg_path}/kubelet-bootstrap.kubeconfig"; then
@@ -1485,25 +1200,26 @@ function config_kubeproxy() {
     args=($@)
     num=$#
 
-    ${bin_path}/kubectl config set-cluster kubernetes \
+    kube-proxy-kubeconfig=${run_path}/pki/kube-proxy.kubeconfig
+    kubectl config set-cluster kubernetes \
         --certificate-authority=${run_path}/pki/ca.pem \
         --embed-certs=true \
         --server=${apiserver_url} \
-        --kubeconfig=${run_path}/pki/kube-proxy.kubeconfig
+        --kubeconfig=${kube-proxy-kubeconfig}
 
-    ${bin_path}/kubectl config set-credentials kube-proxy \
+    kubectl config set-credentials kube-proxy \
         --client-certificate=${run_path}/pki/kube-proxy.pem \
         --client-key=${run_path}/pki/kube-proxy-key.pem \
         --embed-certs=true \
-        --kubeconfig=${run_path}/pki/kube-proxy.kubeconfig
+        --kubeconfig=${kube-proxy-kubeconfig}
 
-    ${bin_path}/kubectl config set-context default \
+    kubectl config set-context default \
         --cluster=kubernetes \
         --user=kube-proxy \
-        --kubeconfig=${run_path}/pki/kube-proxy.kubeconfig
+        --kubeconfig=${kube-proxy-kubeconfig}
 
-    ${bin_path}/kubectl config use-context default \
-        --kubeconfig=${run_path}/pki/kube-proxy.kubeconfig
+    kubectl config use-context default \
+        --kubeconfig=${kube-proxy-kubeconfig}
 
     command="cat > ${cfg_path}/kube-proxy.yaml << EOF
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
@@ -1560,7 +1276,7 @@ systemctl restart kube-proxy
 systemctl enable kube-proxy"
 
     for ((i = 0; i < num; i++)); do
-        if remote_cp "${run_path}/pki/kube-proxy.kubeconfig" "${args[${i}]}:${cfg_path}/kube-proxy.kubeconfig"; then
+        if remote_cp "${kube-proxy-kubeconfig}" "${args[${i}]}:${cfg_path}/kube-proxy.kubeconfig"; then
             success "sync kube-proxy to ${args[${i}]} successfully"
         fi
 
@@ -1571,7 +1287,7 @@ systemctl enable kube-proxy"
 }
 
 function config_registry() {
-    if remote_exec ${node_ip[0]} "${bin_path}/nerdctl load -i /tmp/${registry_pkg}"; then
+    if remote_exec ${node_ip[0]} "${bin_path}/nerdctl load -i /tmp/${registry_file}"; then
         success "load registry image on ${node_ip[0]} successfully"
     fi
 
@@ -1582,7 +1298,7 @@ function config_registry() {
   -e REGISTRY_HTTP_TLS_KEY=/certs/server-key.pem \
   -v ${cfg_path}/pki/registry.pem:/certs/server.pem \
   -v ${cfg_path}/pki/registry-key.pem:/certs/server-key.pem \
-  -v ${base_path}/registry:/var/lib/registry \
+  -v ${registry_data_path}/registry:/var/lib/registry \
   --restart=always registry
 fi"
 
@@ -1592,181 +1308,39 @@ fi"
 }
 
 function install_flannel() {
-    if [ ! -f ${pkg_path}/${flannel_pkg} ]; then
-        download_pkg ${flannel_pkg}
-    fi
-
     if sed -e "s#Placeholder_registry#${registry}#g" \
         -e "s#Placeholder_flannel_backend#${flannel_backend}#g" \
-        ${pkg_path}/${flannel_pkg} | ${bin_path}/kubectl apply -f -; then
+        ${pkg_yaml_path}/${flannel_file} | kubectl apply -f -; then
         success "install flannel successfully"
     fi
 
-    until ${bin_path}/kubectl get node | grep -c Ready | grep ${#node_ip[@]}; do
-        ${bin_path}/kubectl get node
+    until kubectl get node | grep -c Ready | grep ${#node_ip[@]}; do
+        kubectl get node
         sleep 10
     done
     success "all k8s nodes are ready"
 }
 
 function install_coredns() {
-    if [ ! -f ${pkg_path}/${coredns_pkg} ]; then
-        download_pkg ${coredns_pkg}
-    fi
-
     if sed -e "s#Placeholder_registry#${registry}#g" \
-        ${pkg_path}/${coredns_pkg} | ${bin_path}/kubectl apply -f -; then
+        ${pkg_yaml_path}/${coredns_file} | kubectl apply -f -; then
         success "install coredns successfully"
     fi
 }
 
 function install_metrics() {
-    if [ ! -f ${pkg_path}/${metrics_pkg} ]; then
-        download_pkg ${metrics_pkg}
-    fi
-
     if sed -e "s#Placeholder_registry#${registry}#g" \
-        ${pkg_path}/${metrics_pkg} | ${bin_path}/kubectl apply -f -; then
+        ${pkg_yaml_path}/${metrics_file} | kubectl apply -f -; then
         success "install metrics-server successfully"
     fi
 }
 
 function install_localpath() {
-    if [ ! -f ${pkg_path}/${localpath_pkg} ]; then
-        download_pkg ${localpath_pkg}
-    fi
-
     if sed -e "s#Placeholder_registry#${registry}#g" \
         -e "s#Placeholder_local_path#${local_path}#g" \
-        ${pkg_path}/${localpath_pkg} | ${bin_path}/kubectl apply -f -; then
+        ${pkg_yaml_path}/${localpath_file} | kubectl apply -f -; then
         success "install local-path-provisioner successfully"
     fi
-}
-
-function install_longhorn() {
-    if [ ! -f ${pkg_path}/${longhorn_pkg} ]; then
-        download_pkg ${longhorn_pkg}
-    fi
-
-    if sed -e "s#Placeholder_registry#${registry}#g" \
-        ${pkg_path}/${longhorn_pkg} | ${bin_path}/kubectl apply -f -; then
-        success "install longhorn successfully"
-    fi
-}
-
-function install_cilium() {
-    if [ ! -d ${pkg_path}/cilium ]; then tar -zxf ${pkg_path}/${cilium_pkg} -C ${pkg_path}; fi
-    if [ ! -d ${bin_path} ]; then mkdir -p ${bin_path}; fi
-    if [ ! -f ${bin_path}/cilium ]; then tar zxf ${pkg_path}/${cilium_cli_pkg} -C ${bin_path}; fi
-
-    if [ "${cilium_mode}" == "native" ]; then
-        if ${cilium_kubeProxyReplacement}; then
-            ${bin_path}/cilium install --version ${cilium_version} \
-                --set ipam.operator.clusterPoolIPv4PodCIDRList[0]="10.244.0.0/16" \
-                --set routingMode=native \
-                --set autoDirectNodeRoutes=true \
-                --set ipv4NativeRoutingCIDR="10.244.0.0/16" \
-                --set kubeProxyReplacement=true \
-                --set k8sServiceHost=127.0.0.1 \
-                --set k8sServicePort=8443 \
-                --set loadBalancer.acceleration=best-effort \
-                --set loadBalancer.mode=hybrid \
-                --set bpf.masquerade=true \
-                --set hubble.relay.enabled=true \
-                --set hubble.ui.enabled=true \
-                --set image.repository=${registry}/k8s/cilium \
-                --set hubble.relay.image.repository=${registry}/k8s/hubble-relay \
-                --set hubble.ui.backend.image.repository=${registry}/k8s/hubble-ui-backend \
-                --set hubble.ui.frontend.image.repository=${registry}/k8s/hubble-ui \
-                --set hubble.ui.backend.image.useDigest=false \
-                --set hubble.ui.frontend.image.useDigest=false \
-                --set envoy.image.repository=${registry}/k8s/cilium-envoy \
-                --set envoy.image.useDigest=false \
-                --set operator.image.repository=${registry}/k8s/operator \
-                --chart-directory=${pkg_path}/cilium
-        else
-            ${bin_path}/cilium install --version ${cilium_version} \
-                --set ipam.operator.clusterPoolIPv4PodCIDRList[0]="10.244.0.0/16" \
-                --set routingMode=native \
-                --set autoDirectNodeRoutes=true \
-                --set ipv4NativeRoutingCIDR="10.244.0.0/16" \
-                --set kubeProxyReplacement=false \
-                --set nodePort.enabled=true \
-                --set nodePort.enableHealthCheck=false \
-                --set hostPort.enabled=true \
-                --set externalIPs.enabled=true \
-                --set loadBalancer.acceleration=best-effort \
-                --set loadBalancer.mode=hybrid \
-                --set bpf.masquerade=true \
-                --set hubble.relay.enabled=true \
-                --set hubble.ui.enabled=true \
-                --set image.repository=${registry}/k8s/cilium \
-                --set hubble.relay.image.repository=${registry}/k8s/hubble-relay \
-                --set hubble.ui.backend.image.repository=${registry}/k8s/hubble-ui-backend \
-                --set hubble.ui.frontend.image.repository=${registry}/k8s/hubble-ui \
-                --set hubble.ui.backend.image.useDigest=false \
-                --set hubble.ui.frontend.image.useDigest=false \
-                --set envoy.image.repository=${registry}/k8s/cilium-envoy \
-                --set envoy.image.useDigest=false \
-                --set operator.image.repository=${registry}/k8s/operator \
-                --chart-directory=${pkg_path}/cilium
-        fi
-    fi
-    if [ "${cilium_mode}" == "tunnel" ]; then
-        if ${cilium_kubeProxyReplacement}; then
-            ${bin_path}/cilium install --version ${cilium_version} \
-                --set ipam.operator.clusterPoolIPv4PodCIDRList[0]="10.244.0.0/16" \
-                --set routingMode=tunnel \
-                --set tunnelProtocol=geneve \
-                --set kubeProxyReplacement=true \
-                --set k8sServiceHost=127.0.0.1 \
-                --set k8sServicePort=8443 \
-                --set bpf.masquerade=true \
-                --set hubble.relay.enabled=true \
-                --set hubble.ui.enabled=true \
-                --set image.repository=${registry}/k8s/cilium \
-                --set hubble.relay.image.repository=${registry}/k8s/hubble-relay \
-                --set hubble.ui.backend.image.repository=${registry}/k8s/hubble-ui-backend \
-                --set hubble.ui.frontend.image.repository=${registry}/k8s/hubble-ui \
-                --set hubble.ui.backend.image.useDigest=false \
-                --set hubble.ui.frontend.image.useDigest=false \
-                --set envoy.image.repository=${registry}/k8s/cilium-envoy \
-                --set envoy.image.useDigest=false \
-                --set operator.image.repository=${registry}/k8s/operator \
-                --chart-directory=${pkg_path}/cilium
-        else
-            ${bin_path}/cilium install --version ${cilium_version} \
-                --set ipam.operator.clusterPoolIPv4PodCIDRList[0]="10.244.0.0/16" \
-                --set routingMode=tunnel \
-                --set tunnelProtocol=geneve \
-                --set kubeProxyReplacement=false \
-                --set nodePort.enabled=true \
-                --set nodePort.enableHealthCheck=false \
-                --set hostPort.enabled=true \
-                --set externalIPs.enabled=true \
-                --set hubble.relay.enabled=true \
-                --set hubble.ui.enabled=true \
-                --set image.repository=${registry}/k8s/cilium \
-                --set hubble.relay.image.repository=${registry}/k8s/hubble-relay \
-                --set hubble.ui.backend.image.repository=${registry}/k8s/hubble-ui-backend \
-                --set hubble.ui.frontend.image.repository=${registry}/k8s/hubble-ui \
-                --set hubble.ui.backend.image.useDigest=false \
-                --set hubble.ui.frontend.image.useDigest=false \
-                --set envoy.image.repository=${registry}/k8s/cilium-envoy \
-                --set envoy.image.useDigest=false \
-                --set operator.image.repository=${registry}/k8s/operator \
-                --chart-directory=${pkg_path}/cilium
-        fi
-    fi
-}
-
-function install_addons() {
-    if [[ "${container_network}" == "flannel" ]]; then install_flannel; fi
-    if [[ "${container_network}" == "cilium" ]]; then install_cilium; fi
-    install_coredns
-    install_metrics
-    if [[ "${container_storage}" == "localpath" ]]; then install_localpath; fi
-    if [[ "${container_storage}" == "longhorn" ]]; then install_longhorn; fi
 }
 
 if [ $# -eq 0 ]; then
@@ -1779,7 +1353,10 @@ fi
 
 if [ $# -eq 1 ]; then
     if [ $1 == "install" ]; then
+        check_pkg
+        config_certs
         config_system "${node_ip_hostname[@]}"
+        sync_certs "${node_ip[@]}"
         sync_pkg "${node_ip[@]}"
         config_etcd
         config_apiserver
@@ -1789,18 +1366,19 @@ if [ $# -eq 1 ]; then
         config_scheduler
         config_kubectl
         config_kubelet "${node_ip_hostname[@]}"
-        if [[ "${container_network}" == "flannel" ]]; then
-            config_kubeproxy "${node_ip[@]}"
-        else
-            if [[ "${cilium_kubeProxyReplacement}" == "false" ]]; then config_kubeproxy "${node_ip[@]}"; fi
-        fi
+        config_kubeproxy "${node_ip[@]}"
         config_registry
-        install_addons
+        install_flannel
+        install_coredns
+        install_metrics
+        install_localpath
     fi
 
     if [ $1 == "addnode" ]; then
+        check_pkg
         config_system "${addnode_ip_hostname[@]}"
         sync_hosts "${node_ip[@]}"
+        sync_certs "${addnode_ip[@]}"
         sync_pkg "${addnode_ip[@]}"
         config_containerd "${addnode_ip[@]}"
         config_apiproxy "${addnode_ip[@]}"

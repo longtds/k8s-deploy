@@ -29,8 +29,7 @@ function download_file() {
     download "${flannel_url}" "${flannel_file}"
     download "${localpath_url}" "${localpath_file}"
     download "${kubernetes_url}" "${kubernetes_file}"
-    download "${helm_url}" "${helm_file}"
-    download "${coredns_url}" "${coredns_file}"
+    download "${coredns_url}" "${coredns_file}.base"
     download "${metrics_url}" "${metrics_file}"
 }
 
@@ -60,12 +59,6 @@ function make_binary() {
         tar xf ${download_path}/${etcd_file} -C ${pkg_bin_path} --strip-components=1 etcd-v${etcd_version}-linux-${arch_name}/etcdctl && success "make etcdctl successfully"
     else
         note "binary etcdctl exists"
-    fi
-
-    if [ ! -f ${pkg_bin_path}/helm ]; then
-        tar xf ${download_path}/${helm_file} -C ${pkg_bin_path} --strip-components=1 linux-${arch_name}/helm && success "make helm successfully"
-    else
-        note "binary helm exists"
     fi
 
     if [ ! -f ${pkg_bin_path}/nerdctl ]; then
@@ -116,39 +109,38 @@ function make_yaml() {
     if [ ! -d ${pkg_yaml_path} ]; then mkdir -p ${pkg_yaml_path}; fi
 
     if [ ! -f ${pkg_yaml_path}/${flannel_file} ]; then
-        sed -e's#vxlan#Placeholder_flannel_backend#g' \
-            -e's#docker.io/flannel#Placeholder_registry/k8s#g' \
-            ${download_path}/${flannel_file} >${pkg_yaml_path}/${flannel_file} && success "make kube-flannel.yaml successfully"
+        sed -e 's#vxlan#Placeholder_flannel_backend#g' \
+            -e 's#image: ghcr.io/flannel-io#image: Placeholder_registry/k8s#g' \
+            ${download_path}/${flannel_file} >${pkg_yaml_path}/${flannel_file} && success "make ${flannel_file} successfully"
     else
         note "yaml ${flannel_file} exists"
+    fi
+
+    if [ ! -f ${pkg_yaml_path}/${coredns_file} ]; then
+        sed -e 's/__DNS__SERVER__/10.96.0.1/g' \
+            -e 's/__DNS__DOMAIN__/cluster.local/g' \
+            -e 's/__DNS__MEMORY__LIMIT__/200Mi/g' \
+            -e 's#image: registry.k8s.io/coredns#image: Placeholder_registry/k8s#g' \
+            ${download_path}/${coredns_file}.base >${pkg_yaml_path}/${coredns_file} && success "make ${coredns_file} successfully"
+    else
+        note "yaml ${coredns_file} exists"
     fi
 
     if [ ! -f ${pkg_yaml_path}/${localpath_file} ]; then
         sed -e 's#image: rancher/#image: Placeholder_registry/k8s/#g' \
             -e "s#/opt/local-path-provisioner#Placeholder_local_path#g" \
-            -e 's#busybox#Placeholder_registry/k8s/busybox#g' \
+            -e 's#image: busybox#image: Placeholder_registry/k8s/busybox#g' \
             -e '/provisioner: rancher.io/i \  annotations:\n\    defaultVolumeType: local' \
-            ${download_path}/${localpath_file} >${pkg_yaml_path}/${localpath_file} && success "make local-path-storage.yaml successfully"
+            ${download_path}/${localpath_file} >${pkg_yaml_path}/${localpath_file} && success "make ${localpath_file} successfully"
     else
         note "yaml ${localpath_file} exists"
     fi
 
     if [ ! -f ${pkg_yaml_path}/${metrics_file} ]; then
-        sed -e 's#image: registry.k8s.io/metrics-server#Placeholder_registry/k8s#g' \
-            ${download_path}/${metrics_file} >${pkg_yaml_path}/${metrics_file} && success "make metrics-server.yaml successfully"
+        sed -e 's#image: registry.k8s.io/metrics-server#image: Placeholder_registry/k8s#g' \
+            ${download_path}/${metrics_file} >${pkg_yaml_path}/${metrics_file} && success "make ${metrics_file} successfully"
     else
         note "yaml ${metrics_file} exists"
-    fi
-}
-
-function make_chart() {
-    note "make chart"
-    if [ ! -d ${pkg_chart_path} ]; then mkdir -p ${pkg_chart_path}; fi
-
-    if [ ! -d ${pkg_chart_path}/coredns ]; then
-        tar xf ${download_path}/${coredns_file} -C ${pkg_chart_path} && success "make coredns chart successfully"
-    else
-        note "chart coredns exists"
     fi
 }
 
@@ -195,15 +187,16 @@ function make_image() {
         registry_port=5001
         local_reg=127.0.0.1:${registry_port}/k8s
         if docker ps | grep registry | grep 5001; then
-            error "registry already running"
+            warn "registry already running, remove it"
+            docker ps | grep ":${registry_port}" | awk '{print $1}' | xargs docker rm -f
         fi
 
         if docker run -d -p ${registry_port}:5000 -v ${download_path}/registry:/var/lib/registry registry:${registry_version}; then
             success "start registry successfully" && sleep 5
 
             # pause
-            pause_image=registry.k8s.io/pause:${pause_version}
-            sync_image ${pause_image} ${local_reg}/pause:${pause_version} && success "make image pause:${pause_version} successfully"
+            pause_image="registry.k8s.io/pause:${pause_version}"
+            sync_image ${pause_image} "${local_reg}/pause:${pause_version}" && success "make image pause:${pause_version} successfully"
 
             # flannel
             for i in $(grep image: ${download_path}/${flannel_file} | awk '{print $2}' | sort | uniq); do
@@ -212,8 +205,10 @@ function make_image() {
             done
 
             # coredns
-            coredns_image=coredns/coredns:${coredns_version}
-            sync_image $i ${local_reg}/${img} && success "make image coredns:${coredns_version} successfully"
+            for i in $(grep image: ${download_path}/${coredns_file}.base | awk '{print $2}' | sort | uniq); do
+                img=$(echo $i | awk -F / '{print $NF}')
+                sync_image $i ${local_reg}/${img} && success "make image ${local_reg}/${img} successfully"
+            done
 
             # metrics-server
             metrics_yml=${download_path}/${metrics_file}
@@ -232,7 +227,7 @@ function make_image() {
         fi
 
         # rm registry container
-        docker ps |grep ${registry_port} | awk '{print $1}' | xargs docker rm -f
+        docker ps | grep ":${registry_port}" | awk '{print $1}' | xargs docker rm -f
         sync
 
         # image pkg
@@ -263,9 +258,8 @@ function make_target() {
 download_file
 make_binary
 make_yaml
-make_chart
 make_tgz
 make_registry
 make_haproxy
 make_image
-# make_target
+make_target
