@@ -6,8 +6,17 @@ pkg
 info
 target
 download
+backup
+amd64
+arm64
 pki
 *.kubeconfig
 *.log
 *.tar.gz
+*.tgz
 *.tar
+*.bak
+*.zip
+*.gz
+*.tmp
+*.swp
