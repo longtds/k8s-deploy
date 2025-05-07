@@ -246,7 +246,7 @@ function make_target() {
 
     if [ -d ${pkg_path} ]; then
         cd ${run_path}
-        if tar zcvf ${target_name} deploy.sh config.ini utils.sh uninstall.sh Vagrantfile README LICENSE build.sh pkg; then
+        if tar zcvf ${target_name} deploy.sh config.ini utils.sh uninstall.sh Vagrantfile README.md LICENSE build.sh pkg; then
             success "make target successfully"
         else
             error "make target failed"
