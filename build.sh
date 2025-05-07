@@ -192,7 +192,7 @@ function make_image() {
             docker ps | grep ":${registry_port}" | awk '{print $1}' | xargs docker rm -f
         fi
 
-        if docker run -d -p ${registry_port}:5000 -v ${download_path}/registry:/var/lib/registry registry:${registry_version}; then
+        if docker run -d -p ${registry_port}:5000 -v ${download_path}/registry:/var/lib/registry registry; then
             success "start registry successfully" && sleep 5
 
             # pause
