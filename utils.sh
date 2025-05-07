@@ -97,7 +97,7 @@ function download_pkg() {
 function remote_exec() {
     local host=$1
     local cmd=$2
-    if ! ssh -p ${ssh_port} ${user}@${host} "${cmd}" >/dev/null 2>&1; then
+    if ! ssh -i ${ssh_key} -p ${ssh_port} ${user}@${host} "${cmd}" >/dev/null 2>&1; then
         error "Execute command failed on ${host}: ${cmd}"
     fi
 }
@@ -105,20 +105,11 @@ function remote_exec() {
 function remote_cp() {
     local src=$1
     local dst=$2
-    if ! scp -P ${ssh_port} ${src} ${user}@${dst} >/dev/null 2>&1; then
+    local mode=$3
+    if ! scp ${mode} -i ${ssh_key} -P ${ssh_port} ${src} ${user}@${dst} >/dev/null 2>&1; then
         error "Copy ${src} to ${dst} failed"
     else
         success "Copy ${src} to ${dst} successfully"
-    fi
-}
-
-function sync_dir() {
-    local src=$1
-    local dst=$2
-    if! rsync -az -e "ssh -p ${ssh_port}" ${src} ${user}@${dst}:${dst} >/dev/null 2>&1; then
-        error "Sync ${src} to ${dst} failed"
-    else
-        success "Sync ${src} to ${dst} successfully"
     fi
 }
 
@@ -166,7 +157,7 @@ function sync_hosts() {
     args=($@)
     num=$#
     for ((i = 0; i < num; i++)); do
-        if remote_cp "/etc/hosts" "${args[${i}]}:/etc/hosts"; then
+        if remote_cp "${hosts_path}" "${args[${i}]}:/etc/hosts"; then
             success "copy hosts to ${args[${i}]} successfully"
         fi
     done
@@ -187,8 +178,14 @@ function config_system() {
             success "${args[${i}]} set hostname successfully"
         fi
 
-        sed -i -e "/^${args[${i}]}/d" /etc/hosts
-        echo "${args[${i}]} ${args[${num2}]}" >>/etc/hosts
+        if [ ! -f ${hosts_path} ]; then
+            touch ${hosts_path}
+            echo "127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6" >>${hosts_path}
+        fi
+
+        sed -i -e "/^${args[${i}]}/d" ${hosts_path}
+        echo "${args[${i}]} ${args[${num2}]}" >>${hosts_path}
     done
 
     # Sync /etc/hosts

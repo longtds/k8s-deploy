@@ -1,7 +1,13 @@
 .vscode
 .vagrant
 .ssh
+hosts
 pkg
 info
 target
 download
+pki
+*.kubeconfig
+*.log
+*.tar.gz
+*.tar

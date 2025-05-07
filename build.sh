@@ -62,7 +62,7 @@ function make_binary() {
     fi
 
     if [ ! -f ${pkg_bin_path}/nerdctl ]; then
-        tar xf ${download_path}/${nerdctl_file} -C ${pkg_bin_path} && success "make nerdctl successfully"
+        tar xf ${download_path}/${nerdctl_file} -C ${pkg_bin_path} nerdctl && success "make nerdctl successfully"
     else
         note "binary nerdctl exists"
     fi
@@ -138,6 +138,7 @@ function make_yaml() {
 
     if [ ! -f ${pkg_yaml_path}/${metrics_file} ]; then
         sed -e 's#image: registry.k8s.io/metrics-server#image: Placeholder_registry/k8s#g' \
+            -e '/- --metric-resolution=15s/a\        - --kubelet-insecure-tls' \
             ${download_path}/${metrics_file} >${pkg_yaml_path}/${metrics_file} && success "make ${metrics_file} successfully"
     else
         note "yaml ${metrics_file} exists"

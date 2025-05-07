@@ -27,11 +27,11 @@ addnode_ip_hostname=(${addnode_ip[@]} ${addnode_hostname[@]})
 registry=${node_ip[0]}:5000
 
 function config_certs() {
-    if [ ! -d ${run_path}/pki ]; then
-        mkdir -p ${run_path}/pki
+    if [ ! -d ${pki_path} ]; then
+        mkdir -p ${pki_path}
     fi
 
-    cd ${run_path}/pki
+    cd ${pki_path}
     cat >ca-config.json <<EOF
 {
   "signing": {
@@ -98,7 +98,7 @@ EOF
 EOF
 
     chmod 755 -R ${pkg_bin_path}
-    if ${pkg_bin_path}/cfssljson gencert -initca ca-csr.json | ${pkg_bin_path}/cfssljson -bare ca; then
+    if ${pkg_bin_path}/cfssl gencert -initca ca-csr.json | ${pkg_bin_path}/cfssljson -bare ca; then
         success "create k8s ca certificate successfully"
     fi
     if ${pkg_bin_path}/cfssl gencert -initca etcd-ca-csr.json | ${pkg_bin_path}/cfssljson -bare etcd-ca; then
@@ -175,7 +175,7 @@ EOF
     "${node_hostname[0]}",
     "${node_hostname[1]}",
     "${node_hostname[2]}",
-    "10.96.0.1",
+    "${kubeapi_svc_ip}",
     "kubernetes",
     "kubernetes.default",
     "kubernetes.default.svc",
@@ -206,7 +206,7 @@ EOF
     "127.0.0.1",
     "${node_ip[0]}",
     "${node_hostname[0]}",
-    "10.96.0.1",
+    "${kubeapi_svc_ip}",
     "kubernetes",
     "kubernetes.default",
     "kubernetes.default.svc",
@@ -397,15 +397,6 @@ function sync_certs() {
     num=$#
 
     command1="mkdir -p ${cfg_path}/pki"
-    for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command1}"; then
-            success "create ${cfg_path} on ${args[${i}]} successfully"
-        fi
-
-        if sync_dir "${run_path}/pki" "${args[${i}]}:${cfg_path}/pki"; then
-            success "sync pki to ${args[${i}]} successfully"
-        fi
-    done
 
     # Update ca-trust
     command2="if [ -d /etc/pki/ca-trust ]; then
@@ -425,9 +416,20 @@ if [ -d /usr/local/share/ca-certificates ]; then
         update-ca-certificates
     fi
 fi"
-    if remote_exec ${args[${i}]} "${command2}"; then
-        success "update-ca-trust on ${args[${i}]} successfully"
-    fi
+
+    for ((i = 0; i < num; i++)); do
+        if remote_exec ${args[${i}]} "${command1}"; then
+            success "create ${cfg_path} on ${args[${i}]} successfully"
+        fi
+
+        if remote_cp "${pki_path}" "${args[${i}]}:${cfg_path}" -r; then
+            success "sync pki to ${args[${i}]} successfully"
+        fi
+
+        if remote_exec ${args[${i}]} "${command2}"; then
+            success "update-ca-trust on ${args[${i}]} successfully"
+        fi
+    done
 
 }
 
@@ -438,14 +440,17 @@ function sync_pkg() {
     command1="mkdir -p ${bin_path}"
     command2="tar xf /tmp/${containerd_file} -C /
 rm /etc/cni/net.d/10-containerd-net.conflist -rf"
-    command3="tar xf /tmp/${image_file} -C ${registry_path}"
+    command3="if [ ! -d ${registry_path} ];then
+mkdir -p ${registry_path}
+fi
+tar xf /tmp/${image_file} -C ${registry_path}"
 
     for ((i = 0; i < num; i++)); do
         if remote_exec ${args[${i}]} "${command1}"; then
             success "create ${bin_path} on ${args[${i}]} successfully"
         fi
 
-        if sync_dir "${pkg_bin_path}" "${args[${i}]}:${bin_path}"; then
+        if remote_cp "${pkg_bin_path}" "${args[${i}]}:${base_path}" -r; then
             success "sync ${pkg_bin_path} to ${args[${i}]} successfully"
         fi
 
@@ -608,7 +613,7 @@ function config_apiserver() {
     if [ ${#master_node[@]} -eq 3 ]; then
         for i in "${master_node[@]}"; do
             command="cat > ${cfg_path}/token.csv <<EOF
-a5587b0a00bbbd5ead752f7074b4f644,kubelet-bootstrap,10001,\"system:kubelet-bootstrap\"
+${kube_token},kubelet-bootstrap,10001,\"system:kubelet-bootstrap\"
 EOF
 cat > /usr/lib/systemd/system/kube-apiserver.service << EOF
 [Unit]
@@ -627,7 +632,7 @@ ExecStart=${bin_path}/kube-apiserver \
 --advertise-address=${i} \
 --anonymous-auth=false \
 --allow-privileged=true \
---service-cluster-ip-range=10.96.0.0/16 \
+--service-cluster-ip-range=${svc_ip_range} \
 --enable-admission-plugins=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota,NodeRestriction,DefaultTolerationSeconds,DefaultStorageClass \
 --authorization-mode=RBAC,Node \
 --enable-bootstrap-token-auth=true \
@@ -673,7 +678,7 @@ systemctl enable kube-apiserver"
     else
         for i in "${master_node[@]}"; do
             command="cat > ${cfg_path}/token.csv <<EOF
-a5587b0a00bbbd5ead752f7074b4f644,kubelet-bootstrap,10001,\"system:kubelet-bootstrap\"
+${kube_token},kubelet-bootstrap,10001,\"system:kubelet-bootstrap\"
 EOF
 cat > /usr/lib/systemd/system/kube-apiserver.service << EOF
 [Unit]
@@ -692,7 +697,7 @@ ExecStart=${bin_path}/kube-apiserver \
 --advertise-address=${i} \
 --anonymous-auth=false \
 --allow-privileged=true \
---service-cluster-ip-range=10.96.0.0/16 \
+--service-cluster-ip-range=${svc_ip_range} \
 --enable-admission-plugins=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota,NodeRestriction \
 --authorization-mode=RBAC,Node \
 --enable-bootstrap-token-auth=true \
@@ -745,7 +750,7 @@ function config_containerd() {
     command="/usr/local/bin/containerd config default > /tmp/config.toml"
 
     if remote_exec ${args[0]} "${command}"; then
-        if scp -P ${ssh_port} ${user}@${args[0]}:/tmp/config.toml /tmp/config.toml; then
+        if scp -i ${ssh_key} -P ${ssh_port} ${user}@${args[0]}:/tmp/config.toml /tmp/config.toml; then
             sed -i -e "s#registry.k8s.io/pause:3.8#${registry}/k8s/pause:3.8#g" \
                 -e "s#SystemdCgroup = false#SystemdCgroup = true#g" \
                 -e "s#device_ownership_from_security_context = false#device_ownership_from_security_context = true#g" \
@@ -817,7 +822,7 @@ backend k8s-master
     server  ${node_hostname[2]}  ${node_ip[2]}:6443 check
 EOF
     ${bin_path}/nerdctl run -d --name apiproxy --net host --restart always \
-    -v ${cfg_path}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg haproxy
+    -v ${cfg_path}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg haproxy:${haproxy_version}
 fi"
 
         for ((i = 0; i < num; i++)); do
@@ -856,8 +861,8 @@ ExecStart=${bin_path}/kube-controller-manager \
 --bind-address=0.0.0.0 \
 --kubeconfig=${cfg_path}/kube-controller-manager.kubeconfig \
 --allocate-node-cidrs=true \
---cluster-cidr=10.244.0.0/16 \
---service-cluster-ip-range=10.96.0.0/16 \
+--cluster-cidr=${pod_ip_range} \
+--service-cluster-ip-range=${svc_ip_range} \
 --cluster-signing-cert-file=${cfg_path}/pki/ca.pem \
 --cluster-signing-key-file=${cfg_path}/pki/ca-key.pem \
 --cluster-signing-duration=876000h0m0s \
@@ -931,16 +936,9 @@ systemctl enable kube-scheduler"
     done
 }
 
-function config_kubectl() {
-    if ! whereis kubectl >/dev/null 2>&1; then
-        cp ${pkg_bin_path}/kubectl /usr/local/bin/
-        chmod +x /usr/local/bin/kubectl
-        if ! whereis kubectl >/dev/null 2>&1; then
-            error "install kubectl failed"
-        fi
-    fi
-
-    command="${bin_path}/kubectl config set-cluster kubernetes \
+function config_kubeconfig() {
+    for i in "${master_node[@]}"; do
+        command="${bin_path}/kubectl config set-cluster kubernetes \
   --certificate-authority=${cfg_path}/pki/ca.pem \
   --embed-certs=true \
   --server=https://${i}:6443 \
@@ -958,17 +956,14 @@ ${bin_path}/kubectl config use-context default \
   --kubeconfig=${cfg_path}/admin.kubeconfig
 mkdir -p ~/.kube && \cp ${cfg_path}/admin.kubeconfig ~/.kube/config
 ${bin_path}/kubectl get cs"
-
-    for i in "${master_node[@]}"; do
         if remote_exec ${i} "${command}"; then
             success "set kubeconfig on ${i} successfully"
         fi
     done
 
-    scp -P ${ssh_port} ${user}@${node_ip[0]}:${cfg_path}/admin.kubeconfig ${run_path}/admin.kubeconfig
-    mkdir -p /root/.kube && \cp ${run_path}/admin.kubeconfig /root/.kube/config
+    scp -i ${ssh_key} -P ${ssh_port} ${user}@${node_ip[0]}:${cfg_path}/admin.kubeconfig ${run_path}/admin.kubeconfig
 
-    if kubectl get cs; then
+    if ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig get cs; then
         success "set kubeconfig on local machine successfully"
     fi
 }
@@ -978,24 +973,24 @@ function config_kubelet() {
     num=$#
     ((num /= 2))
 
-    kubelet_bootstrap_kubeconfig=${run_path}/pki/kubelet-bootstrap.kubeconfig
+    kubelet_bootstrap_kubeconfig=${pki_path}/kubelet-bootstrap.kubeconfig
 
-    kubectl config set-cluster kubernetes \
-        --certificate-authority=${run_path}/pki/ca.pem \
+    ${pkg_bin_path}/kubectl config set-cluster kubernetes \
+        --certificate-authority=${pki_path}/ca.pem \
         --embed-certs=true \
         --server=${apiserver_url} \
         --kubeconfig=${kubelet_bootstrap_kubeconfig}
 
-    kubectl config set-credentials kubelet-bootstrap \
-        --token=a5587b0a00bbbd5ead752f7074b4f644 \
+    ${pkg_bin_path}/kubectl config set-credentials kubelet-bootstrap \
+        --token=${kube_token} \
         --kubeconfig=${kubelet_bootstrap_kubeconfig}
 
-    kubectl config set-context default \
+    ${pkg_bin_path}/kubectl config set-context default \
         --cluster=kubernetes \
         --user=kubelet-bootstrap \
         --kubeconfig=${kubelet_bootstrap_kubeconfig}
 
-    kubectl config use-context default \
+    ${pkg_bin_path}/kubectl config use-context default \
         --kubeconfig=${kubelet_bootstrap_kubeconfig}
 
     echo 'apiVersion: rbac.authorization.k8s.io/v1
@@ -1010,9 +1005,8 @@ subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: User
     name: kubelet-bootstrap
-' | kubectl apply -f -
-
-    echo 'apiVersion: rbac.authorization.k8s.io/v1
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   annotations:
@@ -1046,9 +1040,8 @@ subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: User
     name: kubernetes
-' | kubectl apply -f -
-
-    echo 'kind: ClusterRoleBinding
+---
+kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: auto-approve-csrs-for-group
@@ -1095,7 +1088,7 @@ roleRef:
   kind: ClusterRole
   name: approve-node-server-renewal-csr
   apiGroup: rbac.authorization.k8s.io
-' | kubectl apply -f -
+' | ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig apply -f -
 
     for ((i = 0; i < num; i++)); do
         if remote_cp "${kubelet_bootstrap_kubeconfig}" "${args[${i}]}:${cfg_path}/kubelet-bootstrap.kubeconfig"; then
@@ -1132,7 +1125,7 @@ authorization:
 cgroupDriver: systemd
 cgroupsPerQOS: true
 clusterDNS:
-- 10.96.0.10
+- ${dns_svc_ip}
 clusterDomain: cluster.local
 resolvConf: ${resolv_conf}
 containerLogMaxFiles: 10
@@ -1184,13 +1177,13 @@ systemctl enable kubelet"
     done
 
     if [ "${args[*]}" == "${node_ip[*]}" ]; then
-        until ${bin_path}/kubectl get csr | grep -c Approved,Issued | grep ${num}; do
-            ${bin_path}/kubectl get csr
+        until ${pkg_bin_path}/kubectl get --kubeconfig ${run_path}/admin.kubeconfig csr | grep -c Approved,Issued | grep ${num}; do
+            ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig get csr
             sleep 2
         done
 
-        until ${bin_path}/kubectl get node | grep -c -v '^NAME' | grep ${num}; do
-            ${bin_path}/kubectl get node
+        until ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node | grep -c -v '^NAME' | grep ${num}; do
+            ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node
             sleep 2
         done
     fi
@@ -1200,26 +1193,27 @@ function config_kubeproxy() {
     args=($@)
     num=$#
 
-    kube-proxy-kubeconfig=${run_path}/pki/kube-proxy.kubeconfig
-    kubectl config set-cluster kubernetes \
-        --certificate-authority=${run_path}/pki/ca.pem \
+    kube_proxy_kubeconfig=${pki_path}/kube-proxy.kubeconfig
+
+    ${pkg_bin_path}/kubectl config set-cluster kubernetes \
+        --certificate-authority=${pki_path}/ca.pem \
         --embed-certs=true \
         --server=${apiserver_url} \
-        --kubeconfig=${kube-proxy-kubeconfig}
+        --kubeconfig=${kube_proxy_kubeconfig}
 
-    kubectl config set-credentials kube-proxy \
-        --client-certificate=${run_path}/pki/kube-proxy.pem \
-        --client-key=${run_path}/pki/kube-proxy-key.pem \
+    ${pkg_bin_path}/kubectl config set-credentials kube-proxy \
+        --client-certificate=${pki_path}/kube-proxy.pem \
+        --client-key=${pki_path}/kube-proxy-key.pem \
         --embed-certs=true \
-        --kubeconfig=${kube-proxy-kubeconfig}
+        --kubeconfig=${kube_proxy_kubeconfig}
 
-    kubectl config set-context default \
+    ${pkg_bin_path}/kubectl config set-context default \
         --cluster=kubernetes \
         --user=kube-proxy \
-        --kubeconfig=${kube-proxy-kubeconfig}
+        --kubeconfig=${kube_proxy_kubeconfig}
 
-    kubectl config use-context default \
-        --kubeconfig=${kube-proxy-kubeconfig}
+    ${pkg_bin_path}/kubectl config use-context default \
+        --kubeconfig=${kube_proxy_kubeconfig}
 
     command="cat > ${cfg_path}/kube-proxy.yaml << EOF
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
@@ -1231,7 +1225,7 @@ clientConnection:
   contentType: application/vnd.kubernetes.protobuf
   kubeconfig: ${cfg_path}/kube-proxy.kubeconfig
   qps: 5
-clusterCIDR: 10.244.0.0/16
+clusterCIDR: ${pod_ip_range}
 configSyncPeriod: 15m0s
 conntrack:
   maxPerCore: 32768
@@ -1276,7 +1270,7 @@ systemctl restart kube-proxy
 systemctl enable kube-proxy"
 
     for ((i = 0; i < num; i++)); do
-        if remote_cp "${kube-proxy-kubeconfig}" "${args[${i}]}:${cfg_path}/kube-proxy.kubeconfig"; then
+        if remote_cp "${kube_proxy_kubeconfig}" "${args[${i}]}:${cfg_path}/kube-proxy.kubeconfig"; then
             success "sync kube-proxy to ${args[${i}]} successfully"
         fi
 
@@ -1298,8 +1292,8 @@ function config_registry() {
   -e REGISTRY_HTTP_TLS_KEY=/certs/server-key.pem \
   -v ${cfg_path}/pki/registry.pem:/certs/server.pem \
   -v ${cfg_path}/pki/registry-key.pem:/certs/server-key.pem \
-  -v ${registry_data_path}/registry:/var/lib/registry \
-  --restart=always registry
+  -v ${registry_path}/registry:/var/lib/registry \
+  --restart=always registry:${registry_version}
 fi"
 
     if remote_exec ${node_ip[0]} "${command}"; then
@@ -1310,12 +1304,12 @@ fi"
 function install_flannel() {
     if sed -e "s#Placeholder_registry#${registry}#g" \
         -e "s#Placeholder_flannel_backend#${flannel_backend}#g" \
-        ${pkg_yaml_path}/${flannel_file} | kubectl apply -f -; then
+        ${pkg_yaml_path}/${flannel_file} | ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig apply -f -; then
         success "install flannel successfully"
     fi
 
-    until kubectl get node | grep -c Ready | grep ${#node_ip[@]}; do
-        kubectl get node
+    until ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node | grep -c Ready | grep ${#node_ip[@]}; do
+        ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node
         sleep 10
     done
     success "all k8s nodes are ready"
@@ -1323,14 +1317,14 @@ function install_flannel() {
 
 function install_coredns() {
     if sed -e "s#Placeholder_registry#${registry}#g" \
-        ${pkg_yaml_path}/${coredns_file} | kubectl apply -f -; then
+        ${pkg_yaml_path}/${coredns_file} | ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig apply -f -; then
         success "install coredns successfully"
     fi
 }
 
 function install_metrics() {
     if sed -e "s#Placeholder_registry#${registry}#g" \
-        ${pkg_yaml_path}/${metrics_file} | kubectl apply -f -; then
+        ${pkg_yaml_path}/${metrics_file} | ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig apply -f -; then
         success "install metrics-server successfully"
     fi
 }
@@ -1338,7 +1332,7 @@ function install_metrics() {
 function install_localpath() {
     if sed -e "s#Placeholder_registry#${registry}#g" \
         -e "s#Placeholder_local_path#${local_path}#g" \
-        ${pkg_yaml_path}/${localpath_file} | kubectl apply -f -; then
+        ${pkg_yaml_path}/${localpath_file} | ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig apply -f -; then
         success "install local-path-provisioner successfully"
     fi
 }
@@ -1356,6 +1350,7 @@ if [ $# -eq 1 ]; then
         check_pkg
         config_certs
         config_system "${node_ip_hostname[@]}"
+        sync_hosts "${node_ip[@]}"
         sync_certs "${node_ip[@]}"
         sync_pkg "${node_ip[@]}"
         config_etcd
@@ -1364,7 +1359,7 @@ if [ $# -eq 1 ]; then
         config_apiproxy "${node_ip[@]}"
         config_controller
         config_scheduler
-        config_kubectl
+        config_kubeconfig
         config_kubelet "${node_ip_hostname[@]}"
         config_kubeproxy "${node_ip[@]}"
         config_registry
