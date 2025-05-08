@@ -117,7 +117,7 @@ function make_yaml() {
     fi
 
     if [ ! -f ${pkg_yaml_path}/${coredns_file} ]; then
-        sed -e 's/__DNS__SERVER__/10.96.0.1/g' \
+        sed -e 's/__DNS__SERVER__/Placeholder_dns_svc_ip/g' \
             -e 's/__DNS__DOMAIN__/cluster.local/g' \
             -e 's/__DNS__MEMORY__LIMIT__/200Mi/g' \
             -e 's#image: registry.k8s.io/coredns#image: Placeholder_registry/k8s#g' \

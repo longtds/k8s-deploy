@@ -1317,6 +1317,7 @@ function install_flannel() {
 
 function install_coredns() {
     if sed -e "s#Placeholder_registry#${registry}#g" \
+        -e "s#Placeholder_dns_svc_ip#${dns_svc_ip}#g" \
         ${pkg_yaml_path}/${coredns_file} | ${pkg_bin_path}/kubectl --kubeconfig ${run_path}/admin.kubeconfig apply -f -; then
         success "install coredns successfully"
     fi
