@@ -31,7 +31,7 @@ function config_certs() {
         mkdir -p ${pki_path}
     fi
 
-    cd ${pki_path}
+    cd ${pki_path} || exit
     cat >ca-config.json <<EOF
 {
   "signing": {
@@ -389,7 +389,7 @@ EOF
         success "create registry certificate successfully"
     fi
 
-    cd ${run_path}
+    cd ${run_path} || exit
 }
 
 function sync_certs() {

@@ -1,5 +1,6 @@
-#/bin/bash
-# This is a collection of useful shell scripts
+#!/bin/bash
+# shellcheck disable=SC2087,SC2086,SC2206,SC2016,SC1091,SC2154,SC2068
+
 if [ -f config.ini ]; then
     source config.ini
 else
