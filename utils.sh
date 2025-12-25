@@ -1,11 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2087,SC2086,SC2206,SC2016,SC1091,SC2154,SC2068
-
-if [ -f config.ini ]; then
-    source config.ini
-else
-    error "file config.ini not found."
-fi
+# shellcheck disable=SC2154,SC1091,SC2068,SC2086,SC2206
 
 set +e
 set -o noglob
@@ -64,7 +58,7 @@ function download() {
 
     note "download ${file_url}"
     if curl -L --progress-bar "${file_url}" -o "${download_path}/${file_name}"; then
-        success "download ${file_name} successfully"
+        success "download ${file_name}"
     else
         error "download ${file_name} failed"
     fi
@@ -73,6 +67,11 @@ function download() {
 function sync_image() {
     src_image="$1"
     dst_image="$2"
+
+    if [ -n "${registry_proxy}" ]; then
+        src_image=${registry_proxy}/${src_image}
+    fi
+
     if docker pull --platform linux/${arch_name} "${src_image}"; then
         docker tag "${src_image}" "${dst_image}"
         if ! docker push "${dst_image}"; then
@@ -91,14 +90,14 @@ function download_pkg() {
         error "download ${file_path} failed"
     else
         chmod 755 "${pkg_path}/${file_path}"
-        success "download ${file_path} successfully"
+        success "download ${file_path}"
     fi
 }
 
 function remote_exec() {
     local host=$1
     local cmd=$2
-    if ! ssh -i ${ssh_key} -p ${ssh_port} ${user}@${host} "${cmd}" >/dev/null 2>&1; then
+    if ! ssh -i ${ssh_key} -p ${ssh_port} ${ssh_user}@${host} "${cmd}" >/dev/null 2>&1; then
         error "Execute command failed on ${host}: ${cmd}"
     fi
 }
@@ -107,46 +106,46 @@ function remote_cp() {
     local src=$1
     local dst=$2
     local mode=$3
-    if ! scp ${mode} -i ${ssh_key} -P ${ssh_port} ${src} ${user}@${dst} >/dev/null 2>&1; then
+    if ! scp ${mode} -i ${ssh_key} -P ${ssh_port} ${src} ${ssh_user}@${dst} >/dev/null 2>&1; then
         error "Copy ${src} to ${dst} failed"
     else
-        success "Copy ${src} to ${dst} successfully"
+        success "Copy ${src} to ${dst}"
     fi
 }
 
 function check_pkg() {
-    pkg_bin_list=(cfssl cfssljson etcd etcdctl kube-apiserver kube-controller-manager kube-scheduler kubelet kube-proxy kubectl nerdctl)
+    pkg_bin_list=(cfssl cfssljson etcd etcdctl kube-apiserver kube-controller-manager kube-scheduler kubelet kube-proxy kubectl)
     pkg_yaml_list=(${flannel_file} ${coredns_file} ${localpath_file} ${metrics_file})
     pkg_image_list=(${registry_file} ${haproxy_file} ${image_file})
-    pkg_tgz_list=(${containerd_file})
+    pkg_tgz_list=(${nerdctl_file})
     pkg_bin_lastpath=${pkg_bin_path##*/}
     pkg_yaml_lastpath=${pkg_yaml_path##*/}
     pkg_image_lastpath=${pkg_image_path##*/}
     pkg_tgz_lastpath=${pkg_tgz_path##*/}
 
     for i in ${pkg_bin_list[@]}; do
-        if [ ! -f ${pkg_bin_path}/${i} ]; then
+        if [ ! -f ${pkg_path}/bin/${i} ]; then
             note "not found ${i}, start downloading..."
             download_pkg ${pkg_bin_lastpath}/${i}
         fi
     done
 
     for i in ${pkg_yaml_list[@]}; do
-        if [ ! -f ${pkg_yaml_path}/${i} ]; then
+        if [ ! -f ${pkg_path}/yaml/${i} ]; then
             note "not found ${i}, start downloading..."
             download_pkg ${pkg_yaml_lastpath}/${i}
         fi
     done
 
     for i in ${pkg_image_list[@]}; do
-        if [ ! -f ${pkg_image_path}/${i} ]; then
+        if [ ! -f ${pkg_path}/image/${i} ]; then
             note "not found ${i}, start downloading..."
             download_pkg ${pkg_image_lastpath}/${i}
         fi
     done
 
     for i in ${pkg_tgz_list[@]}; do
-        if [ ! -f ${pkg_tgz_path}/${i} ]; then
+        if [ ! -f ${pkg_path}/tgz/${i} ]; then
             note "not found ${i}, start downloading..."
             download_pkg ${pkg_tgz_lastpath}/${i}
         fi
@@ -154,12 +153,11 @@ function check_pkg() {
 }
 
 function sync_hosts() {
-    # Sync /etc/hosts
     args=($@)
     num=$#
     for ((i = 0; i < num; i++)); do
-        if remote_cp "${hosts_path}" "${args[${i}]}:/etc/hosts"; then
-            success "copy hosts to ${args[${i}]} successfully"
+        if remote_cp hosts "${args[${i}]}:/etc/hosts"; then
+            success "${args[${i}]} hosts copied"
         fi
     done
 }
@@ -169,35 +167,34 @@ function config_system() {
     num=$#
     ((num /= 2))
 
-    # Set hostname
+    # hostname
     for ((i = 0; i < num; i++)); do
         ((num2 = num + i))
 
         command="hostnamectl set-hostname ${args[${num2}]}"
 
         if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set hostname successfully"
+            success "${args[${i}]} set-hostname"
         fi
 
-        if [ ! -f ${hosts_path} ]; then
-            touch ${hosts_path}
+        if [ ! -f hosts ]; then
+            touch hosts
             echo "127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
-::1         localhost localhost.localdomain localhost6 localhost6.localdomain6" >>${hosts_path}
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6" >>hosts
         fi
 
-        sed -i -e "/^${args[${i}]}/d" ${hosts_path}
-        echo "${args[${i}]} ${args[${num2}]}" >>${hosts_path}
+        sed -i -e "/^${args[${i}]}/d" hosts
+        echo "${args[${i}]} ${args[${num2}]}" >>hosts
     done
 
-    # Sync /etc/hosts
     for ((i = 0; i < num; i++)); do
         if remote_cp "/etc/hosts" "${args[${i}]}:/etc/hosts"; then
-            success "copy hosts to ${args[${i}]} successfully"
+            success "${args[${i}]} /etc/hosts"
         fi
     done
 
-    # Set kernel parameters
-    command="cat >/etc/sysctl.d/kubernetes.conf <<EOF
+    # sysctl
+    command="cat >/etc/sysctl.d/k8s.conf <<EOF
 fs.inotify.max_user_watches = 65536
 fs.file-max = 107374181600
 vm.panic_on_oom = 0
@@ -222,11 +219,11 @@ sysctl --system"
 
     for ((i = 0; i < num; i++)); do
         if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set kernel successfully"
+            success "${args[${i}]} /etc/sysctl.d/k8s.conf"
         fi
     done
 
-    # Set SElinux
+    # selinux
     command="if [ -f /etc/selinux/config ]; then
     if [ \$(getenforce) != \"Disabled\" ]; then
         setenforce 0 && sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
@@ -235,11 +232,11 @@ fi"
 
     for ((i = 0; i < num; i++)); do
         if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set selinux successfully"
+            success "${args[${i}]} selinux disabled"
         fi
     done
 
-    # Set firewalld
+    # firewalld
     command="if systemctl list-units | grep firewalld; then
     systemctl disable firewalld --now
 fi
@@ -250,21 +247,21 @@ fi"
 
     for ((i = 0; i < num; i++)); do
         if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set firewalld successfully"
+            success "${args[${i}]} firewalld disabled"
         fi
     done
 
-    # Set swap
+    # swapoff
     command="swapoff -a
 sed -ri 's/.*swap.*/#&/' /etc/fstab"
 
     for ((i = 0; i < num; i++)); do
         if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set swapoff successfully"
+            success "${args[${i}]} /etc/fstab swapoff"
         fi
     done
 
-    # Set nofile limits
+    # nofile
     command="ulimit -SHn 65536
 ulimit -SHu 65536
 cat > /etc/security/limits.conf <<EOF
@@ -278,32 +275,60 @@ EOF"
 
     for ((i = 0; i < num; i++)); do
         if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set nofile ulimit successfully"
+            success "${args[${i}]} /etc/security/limits.conf"
         fi
     done
 
-    # Set timezone
+    command="if [ -f /etc/systemd/system.conf ]; then
+    sed  's/.*DefaultLimitNOFILE=.*/DefaultLimitNOFILE=65536/' /etc/systemd/system.conf
+elif [ -f /lib/systemd/system.conf ]; then
+    sed  's/.*DefaultLimitNOFILE=.*/DefaultLimitNOFILE=65536/' /lib/systemd/system.conf
+fi
+systemctl daemon-reload"
+
+    for ((i = 0; i < num; i++)); do
+        if remote_exec ${args[${i}]} "${command}"; then
+            success "${args[${i}]} set systemd nofile"
+        fi
+    done
+
+    # timezone
     command="ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 echo 'Asia/Shanghai' >/etc/timezone"
 
     for ((i = 0; i < num; i++)); do
         if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set timezone successfully"
+            success "${args[${i}]} /etc/timezone Asia/Shanghai"
         fi
     done
 
-    # Set ntp
-    command="if [ -f /etc/chrony.conf ]; then
-    sed -i '/^#allow/c\allow 0.0.0.0/0' /etc/chrony.conf
+    # ntp
+    if [ ! -z "${ntp_server}" ]; then
+        command="if [ -f /etc/chrony.conf ]; then
+    sed -i -e \"/^pool/c\server ${node_ip[0]} iburst\" /etc/chrony.conf
+    systemctl restart chronyd
+    systemctl enable chronyd
+fi"
+        for ((i = 0; i < num; i++)); do
+            if remote_exec ${args[${i}]} "${command}"; then
+                success "${args[${i}]} set ntp server"
+            fi
+        done
+    fi
+
+    if [ -z "${ntp_server}" ]; then
+        command="if [ -f /etc/chrony.conf ]; then
+    sed -i -e '/^#allow/c\allow 0.0.0.0/0' \
+        -e \"/^pool/c\server ${ntp_server} iburst\"\
+        /etc/chrony.conf
     systemctl restart chronyd
     systemctl enable chronyd
 fi"
 
-    if remote_exec ${node_ip[0]} "${command}"; then
-        success "${node_ip[0]} set ntp successfully"
-    fi
+        if remote_exec ${node_ip[0]} "${command}"; then
+            success "${node_ip[0]} set ntp master"
+        fi
 
-    if [ $num -gt 1 ]; then
         command="if [ -f /etc/chrony.conf ]; then
     sed -i -e \"/^pool/c\server ${node_ip[0]} iburst\" /etc/chrony.conf
     systemctl restart chronyd
@@ -312,41 +337,494 @@ fi"
 
         for ((i = 1; i < num; i++)); do
             if remote_exec ${args[${i}]} "${command}"; then
-                success "${args[${i}]} set ntp successfully"
+                success "${args[${i}]} set ntp slave"
             fi
         done
     fi
 
-    # Set k8s modules
-    command="cat >> /etc/modules-load.d/kubernetes.conf <<EOF 
+    # k8s modules
+    command="cat >> /etc/modules-load.d/kubernetes.conf <<EOF
 overlay
+bridge
 br_netfilter
+nf_conntrack
+nf_conntrack_ipv4
+nf_nat
+nf_nat_ipv4
+nf_nat_redirect
+nf_tables
+nf_defrag_ipv4
+nft_ct
+nft_nat
+nft_socket
+nft_tproxy
+nft_redir
+ip_tables
+ip_set
+ip_set_hash_ip
+iptable_mangle
+iptable_nat
+iptable_raw
+x_tables
+xt_REDIRECT
+xt_connmark
+xt_conntrack
+xt_mark
+xt_owner
+xt_tcpudp
+xt_multiport
 EOF
 systemctl daemon-reload
 systemctl restart systemd-modules-load.service"
 
     for ((i = 0; i < num; i++)); do
         if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} set k8s modules successfully"
+            success "${args[${i}]} set kubernetes kernel modules"
+        fi
+    done
+}
+
+function config_certs() {
+    if [ ! -d ${pki_path} ]; then
+        mkdir -p ${pki_path}
+    fi
+
+    cd ${pki_path} || exit
+    cat >ca-config.json <<EOF
+{
+  "signing": {
+    "default": {
+      "expiry": "876000h"
+    },
+    "profiles": {
+      "kubernetes": {
+        "usages": [
+            "signing",
+            "key encipherment",
+            "server auth",
+            "client auth"
+        ],
+        "expiry": "876000h"
+      }
+    }
+  }
+}
+EOF
+
+    cat >ca-csr.json <<EOF
+{
+  "CN": "kubernetes",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Beijing",
+      "L": "Beijing",
+      "O": "k8s",
+      "OU": "system"
+    }
+  ],
+  "ca": {
+    "expiry": "876000h"
+ }
+}
+EOF
+
+    cat >etcd-ca-csr.json <<EOF
+{
+  "CN": "etcd",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Beijing",
+      "L": "Beijing",
+      "O": "etcd",
+      "OU": "system"
+    }
+  ],
+  "ca": {
+    "expiry": "876000h"
+ }
+}
+EOF
+
+    chmod 755 -R ${pkg_path}/bin
+    if ${pkg_path}/bin/cfssl gencert -initca ca-csr.json | ${pkg_path}/bin/cfssljson -bare ca; then
+        success "k8s ca certificate created"
+    fi
+    if ${pkg_path}/bin/cfssl gencert -initca etcd-ca-csr.json | ${pkg_path}/bin/cfssljson -bare etcd-ca; then
+        success "etcd ca certificate created"
+    fi
+
+    if [ ${#node_ip[@]} -ge 3 ]; then
+        cat >etcd-csr.json <<EOF
+{
+  "CN": "etcd",
+  "hosts": [
+    "localhost",
+    "127.0.0.1",
+    "${node_ip[0]}",
+    "${node_ip[1]}",
+    "${node_ip[2]}"
+  ],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Beijing",
+      "L": "Beijing",
+      "O": "etcd",
+      "OU": "etcd"
+    }
+  ]
+}
+EOF
+    else
+        cat >etcd-csr.json <<EOF
+{
+  "CN": "etcd",
+  "hosts": [
+    "localhost",
+    "127.0.0.1",
+    "${node_ip[0]}"
+  ],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Beijing",
+      "L": "Beijing",
+      "O": "etcd",
+      "OU": "etcd"
+    }
+  ]
+}
+EOF
+    fi
+
+    if ${pkg_path}/bin/cfssl gencert -ca=etcd-ca.pem -ca-key=etcd-ca-key.pem -config=ca-config.json \
+        -profile=kubernetes etcd-csr.json | ${pkg_path}/bin/cfssljson -bare etcd; then
+        success "etcd server certificate created"
+    fi
+
+    if [ ${#node_ip[@]} -ge 3 ]; then
+        cat >kube-apiserver-csr.json <<EOF
+{
+  "CN": "kubernetes",
+  "hosts": [
+    "localhost",
+    "127.0.0.1",
+    "${node_ip[0]}",
+    "${node_ip[1]}",
+    "${node_ip[2]}",
+    "${node_hostname[0]}",
+    "${node_hostname[1]}",
+    "${node_hostname[2]}",
+    "10.96.0.1",
+    "kubernetes",
+    "kubernetes.default",
+    "kubernetes.default.svc",
+    "kubernetes.default.svc.cluster",
+    "kubernetes.default.svc.cluster.local"
+  ],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Beijing",
+      "L": "Beijing",
+      "O": "system:masters",
+      "OU": "system"
+    }
+  ]
+}
+EOF
+    else
+        cat >kube-apiserver-csr.json <<EOF
+{
+  "CN": "kubernetes",
+  "hosts": [
+    "localhost",
+    "127.0.0.1",
+    "${node_ip[0]}",
+    "${node_hostname[0]}",
+    "10.96.0.1",
+    "kubernetes",
+    "kubernetes.default",
+    "kubernetes.default.svc",
+    "kubernetes.default.svc.cluster",
+    "kubernetes.default.svc.cluster.local"
+  ],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Beijing",
+      "L": "Beijing",
+      "O": "system:masters",
+      "OU": "system"
+    }
+  ]
+}
+EOF
+    fi
+
+    if ${pkg_path}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes kube-apiserver-csr.json | ${pkg_path}/bin/cfssljson -bare kube-apiserver; then
+        success "kube-apiserver certificate created"
+    fi
+
+    cat >kube-controller-manager-csr.json <<EOF
+{
+  "CN": "system:kube-controller-manager",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "L": "Beijing", 
+      "ST": "Beijing",
+      "O": "system:masters",
+      "OU": "system"
+    }
+  ]
+}
+EOF
+
+    if ${pkg_path}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes kube-controller-manager-csr.json | ${pkg_path}/bin/cfssljson -bare kube-controller-manager; then
+        success "kube-controller-manager certificate created"
+    fi
+
+    cat >kube-scheduler-csr.json <<EOF
+{
+  "CN": "system:kube-scheduler",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "L": "Beijing", 
+      "ST": "Beijing",
+      "O": "system:masters",
+      "OU": "system"
+    }
+  ]
+}
+EOF
+
+    if ${pkg_path}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes kube-scheduler-csr.json | ${pkg_path}/bin/cfssljson -bare kube-scheduler; then
+        success "kube-scheduler certificate created"
+    fi
+
+    cat >admin-csr.json <<EOF
+{
+  "CN": "admin",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "L": "BeiJing",
+      "ST": "BeiJing",
+      "O": "system:masters",
+      "OU": "system"
+    }
+  ]
+}
+EOF
+    if ${pkg_path}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes admin-csr.json | ${pkg_path}/bin/cfssljson -bare admin; then
+        success "kube admin certificate created"
+    fi
+
+    cat >kube-proxy-csr.json <<EOF
+{
+  "CN": "system:kube-proxy",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "L": "BeiJing",
+      "ST": "BeiJing",
+      "O": "k8s",
+      "OU": "system"
+    }
+  ]
+}
+EOF
+    if ${pkg_path}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes kube-proxy-csr.json | ${pkg_path}/bin/cfssljson -bare kube-proxy; then
+        success "kube-proxy certificate created"
+    fi
+
+    cat >proxy-client-csr.json <<EOF
+{
+  "CN": "aggregator",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "BeiJing",
+      "L": "BeiJing",
+      "O": "system:masters",
+      "OU": "system"
+    }
+  ]
+}
+EOF
+    if ${pkg_path}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes proxy-client-csr.json | ${pkg_path}/bin/cfssljson -bare proxy-client; then
+        success "proxy-client certificate created"
+    fi
+
+    if openssl genrsa -out sa.key 2048 >/dev/null 2>&1 && openssl rsa -in sa.key -pubout -out sa.pub; then
+        success "kube service certificate created"
+    fi
+
+    cat >registry-csr.json <<EOF
+{
+  "CN": "registry",
+  "hosts": [
+    "${node_ip[0]}",
+    "${node_ip[1]}",
+    "${node_ip[2]}"
+  ],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Beijing",
+      "L": "Beijing",
+      "O": "registry",
+      "OU": "registry"
+    }
+  ]
+}
+EOF
+    if ${pkg_path}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
+        -profile=kubernetes registry-csr.json | ${pkg_path}/bin/cfssljson -bare registry; then
+        success "registry certificate created"
+    fi
+
+    cd ${run_path} || exit
+}
+
+function sync_certs() {
+    args=($@)
+    num=$#
+
+    command1="mkdir -p ${install_path}/etc/pki"
+
+    # Update ca-trust
+    command2="if [ -d /etc/pki/ca-trust ]; then
+    if update-ca-trust force-enable; then
+        \cp -f ${install_path}/etc/pki/ca.pem /etc/pki/ca-trust/source/anchors/k8s-ca.pem
+        \cp -f ${install_path}/etc/pki/etcd-ca.pem /etc/pki/ca-trust/source/anchors/etcd-ca.pem
+        update-ca-trust extract
+    else
+        cat ${install_path}/etc/pki/ca.pem >>/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+        cat ${install_path}/etc/pki/etcd-ca.pem >>/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+    fi
+fi
+if [ -d /usr/local/share/ca-certificates ]; then
+    if [ ! -f /usr/local/share/ca-certificates/k8s.crt ];then
+        \cp -f ${install_path}/etc/pki/ca.pem /usr/local/share/ca-certificates/k8s.crt
+        \cp -f ${install_path}/etc/pki/etcd-ca.pem /usr/local/share/ca-certificates/etcd.crt
+        update-ca-certificates
+    fi
+fi"
+
+    for ((i = 0; i < num; i++)); do
+        if remote_exec ${args[${i}]} "${command1}"; then
+            success "${args[${i}]} ${install_path}/etc created"
+        fi
+
+        if remote_cp "${pki_path}" "${args[${i}]}:${install_path}/etc" -r; then
+            success "${args[${i}]} pki copied"
+        fi
+
+        if remote_exec ${args[${i}]} "${command2}"; then
+            success "${args[${i}]} update-ca-trust"
         fi
     done
 
-    # Set ipvs
-    if [ ${kubeproxy_mode} == "ipvs" ]; then
-        command="cat >> /etc/modules-load.d/ipvs.conf <<EOF 
-ip_vs
-ip_vs_rr
-ip_vs_wrr
-ip_vs_sh
-nf_conntrack
-EOF
-systemctl daemon-reload
-systemctl restart systemd-modules-load.service"
+}
 
-        for ((i = 0; i < num; i++)); do
-            if remote_exec ${args[${i}]} "${command}"; then
-                success "${args[${i}]} set ipvs modules successfully"
-            fi
-        done
+function sync_pkg() {
+    args=($@)
+    num=$#
+
+    command1="mkdir -p ${install_path}/bin"
+    command2="tar xf /tmp/${nerdctl_file} -C /usr/local/"
+
+    for ((i = 0; i < num; i++)); do
+        if remote_exec ${args[${i}]} "${command1}"; then
+            success "${args[${i}]} ${install_path}/bin created"
+        fi
+
+        if remote_cp "${pkg_path}/bin" "${args[${i}]}:${install_path}/" -r; then
+            success "${args[${i}]} ${pkg_path}/bin copied"
+        fi
+
+        if remote_cp "${pkg_path}/image/${haproxy_file}" "${args[${i}]}:/tmp/${haproxy_file}"; then
+            success "${args[${i}]} ${haproxy_file} copied"
+        fi
+
+        if remote_cp "${pkg_path}/tgz/${nerdctl_file}" "${args[${i}]}:/tmp/${nerdctl_file}"; then
+            remote_exec ${args[${i}]} "${command2}"
+            success "${args[${i}]} ${nerdctl_file} copied"
+        fi
+    done
+
+    command3="mkdir -p ${data_path}/registry && tar xf /tmp/${image_file} -C ${data_path}/registry --strip-components=1"
+
+    if remote_cp "${pkg_path}/image/${image_file}" "${master_node[0]}:/tmp/${image_file}" &&
+        remote_exec ${master_node[0]} "${command3}"; then
+        success "${master_node[0]} ${image_file} copied"
+    fi
+
+    if remote_cp "${pkg_path}/image/${registry_file}" "${master_node[0]}:/tmp/${registry_file}"; then
+        success "${master_node[0]} ${registry_file} copied"
     fi
 }

@@ -12,7 +12,7 @@ Vagrant.configure("2") do |config|
   (1..5).each do |i|
     config.vm.define "node#{i}" do |node|
       node.vm.synced_folder "./.ssh", "/vagrant"
-      node.vm.provider "libvirt" do |vb|
+      node.vm.provider "vmware_desktop" do |vb|
         vb.memory = "4096"
         vb.cpus=2
       end
