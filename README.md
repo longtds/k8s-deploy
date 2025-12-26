@@ -32,6 +32,10 @@
 ## 卸载集群
 * 执行 ./uninstall.sh
 
+## 离线包构建
+* 执行 ./build.sh
+* 离线包存放在target目录下
+
 ## 软件列表
 * etcd                      3.6.x
 * kubernetes                1.35.x
