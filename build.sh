@@ -25,7 +25,6 @@ function download_file() {
     download "${cfssljson_url}" "${cfssljson_file}"
     download "${etcd_url}" "${etcd_file}"
     download "${nerdctl_url}" "${nerdctl_file}"
-    download "${flannel_url}" "${flannel_file}"
     download "${localpath_url}" "${localpath_file}"
     download "${kubernetes_url}" "${kubernetes_file}"
     download "${coredns_url}" "${coredns_file}.base"
@@ -109,13 +108,6 @@ function make_yaml() {
     h2 "make yaml"
     if [ ! -d ${pkg_path}/yaml ]; then mkdir -p ${pkg_path}/yaml; fi
 
-    if [ ! -f ${pkg_path}/yaml/${flannel_file} ]; then
-        sed -e 's#image: ghcr.io/flannel-io#image: Placeholder_registry/k8s#g' \
-            ${download_path}/${flannel_file} >${pkg_path}/yaml/${flannel_file} && success "make ${flannel_file}"
-    else
-        note "yaml ${flannel_file} exists"
-    fi
-
     if [ ! -f ${pkg_path}/yaml/${coredns_file} ]; then
         sed -e 's/__DNS__SERVER__/10.96.0.10/g' \
             -e 's/__DNS__DOMAIN__/cluster.local/g' \
@@ -146,6 +138,8 @@ function make_yaml() {
 
     if [ ! -f ${pkg_path}/yaml/${calico_file} ]; then
         sed -e 's#image: quay.io/calico#image: Placeholder_registry/k8s#g' \
+            -e 's/# - name: CALICO_IPV4POOL_CIDR/- name: CALICO_IPV4POOL_CIDR/' \
+            -e 's@#   value: \"192.168.0.0/16\"@  value: \"10.244.0.0\/16\"@' \
             ${download_path}/${calico_file} >${pkg_path}/yaml/${calico_file} && success "make ${calico_file}"
     else
         note "yaml ${calico_file} exists"
@@ -204,21 +198,11 @@ function make_image() {
             # pause
             sync_image ${pause_image} "${local_reg}/pause:${pause_version}" && success "make image pause:${pause_version}"
 
-            # flannel
-            if [ ${cni_plugin} == 'flannel' ]; then
-                for i in $(grep image: ${download_path}/${flannel_file} | awk '{print $2}' | sort | uniq); do
-                    img=$(echo $i | awk -F / '{print $NF}')
-                    sync_image $i ${local_reg}/${img} && success "make image ${local_reg}/${img}"
-                done
-            fi
-
             # calico
-            if [ ${cni_plugin} == 'calico' ]; then
-                for i in $(grep image: ${download_path}/${calico_file} | awk '{print $2}' | sort | uniq); do
-                    img=$(echo $i | awk -F / '{print $NF}')
-                    sync_image $i ${local_reg}/${img} && success "make image ${local_reg}/${img}"
-                done
-            fi
+            for i in $(grep image: ${download_path}/${calico_file} | awk '{print $2}' | sort | uniq); do
+                img=$(echo $i | awk -F / '{print $NF}')
+                sync_image $i ${local_reg}/${img} && success "make image ${local_reg}/${img}"
+            done
 
             # coredns
             for i in $(grep image: ${download_path}/${coredns_file}.base | awk '{print $2}' | sort | uniq); do

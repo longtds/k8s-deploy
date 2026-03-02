@@ -1,4 +1,4 @@
-## 操作系统推荐
+## 操作系统
 * Anolis OS: 23.3
 * Kylin OS: v11
 * OpenEuler: 24.03
@@ -7,7 +7,7 @@
 * Ubuntu: 24.04
 * Debian: 13.2
 
-## 文件及命令说明
+## 文件及命令
 * config.yaml        集群配置文件
 * deploy.sh install  集群部署
 * deploy.sh addnode  集群添加节点
@@ -33,6 +33,7 @@
 * 执行 ./uninstall.sh
 
 ## 离线包构建
+* docker环境
 * 执行 ./build.sh
 * 离线包存放在target目录下
 
@@ -44,10 +45,10 @@
 * nerdctl                   2.x
 * k9s                       0.50.x
 * coredns                   1.13.x
-* flannel                   0.27.x
+* calico                    3.31.x
 * metrics-server            0.8.x
 * local-path-provisioner    0.0.32
 
-## 其它说明
-* 节点数量不受限制
-* 默认前三个节点为控制节点并接收负责调度
+## 部署模式
+* 前三个节点部署为高可用控制面
+* 少于三节点控制面采用非高可用部署

@@ -115,7 +115,7 @@ function remote_cp() {
 
 function check_pkg() {
     pkg_bin_list=(cfssl cfssljson etcd etcdctl kube-apiserver kube-controller-manager kube-scheduler kubelet kube-proxy kubectl)
-    pkg_yaml_list=(${flannel_file} ${coredns_file} ${localpath_file} ${metrics_file})
+    pkg_yaml_list=(${coredns_file} ${localpath_file} ${metrics_file})
     pkg_image_list=(${registry_file} ${haproxy_file} ${image_file})
     pkg_tgz_list=(${nerdctl_file})
     pkg_bin_lastpath=${pkg_bin_path##*/}

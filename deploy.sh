@@ -867,7 +867,7 @@ function config_registry() {
   -v ${install_path}/etc/pki/registry.pem:/certs/server.pem \
   -v ${install_path}/etc/pki/registry-key.pem:/certs/server-key.pem \
   -v ${data_path}/registry:/var/lib/registry \
-  --Restart=on-failure registry:${registry_version}
+  --restart always registry:${registry_version}
 fi"
 
     if remote_exec ${node_ip[0]} "${command}"; then
@@ -876,18 +876,9 @@ fi"
 }
 
 function install_cni_plugin() {
-    if [ "${cni_plugin}" == "flannel" ]; then
-        if sed -e "s#Placeholder_registry#${registry}#g" \
-            ${pkg_path}/yaml/${flannel_file} | ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig apply -f -; then
-            success "flannel installed"
-        fi
-    fi
-
-    if [ "${cni_plugin}" == "calico" ]; then
-        if sed -e "s#Placeholder_registry#${registry}#g" \
-            ${pkg_path}/yaml/${calico_file} | ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig apply -f -; then
-            success "calico installed"
-        fi
+    if sed -e "s#Placeholder_registry#${registry}#g" \
+        ${pkg_path}/yaml/${calico_file} | ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig apply -f -; then
+        success "calico installed"
     fi
 
     until ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node | grep -c Ready | grep ${#node_ip[@]}; do
@@ -963,4 +954,3 @@ if [ $# -eq 1 ]; then
         config_kubeproxy "${addnode_ip[@]}"
     fi
 fi
-
