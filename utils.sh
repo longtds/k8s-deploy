@@ -162,6 +162,39 @@ function sync_hosts() {
     done
 }
 
+function config_chrony() {
+    local label=$1
+    local directives=$2
+    shift 2
+    local host
+
+    local command="chrony_conf=''
+for f in /etc/chrony.conf /etc/chrony/chrony.conf; do
+    if [ -f \"\$f\" ]; then chrony_conf=\$f; break; fi
+done
+if [ -z \"\$chrony_conf\" ]; then exit 0; fi
+chrony_svc=''
+for s in chronyd chrony; do
+    if systemctl cat \"\${s}.service\" >/dev/null 2>&1; then chrony_svc=\$s; break; fi
+done
+if [ -z \"\$chrony_svc\" ]; then exit 0; fi
+sed -i '/# BEGIN k8s-deploy/,/# END k8s-deploy/d' \"\$chrony_conf\"
+sed -i -E 's/^[[:space:]]*(pool|server|allow|local)[[:space:]]/#&/' \"\$chrony_conf\"
+cat >>\"\$chrony_conf\" <<EOF
+# BEGIN k8s-deploy
+${directives}
+# END k8s-deploy
+EOF
+systemctl restart \"\$chrony_svc\"
+systemctl enable \"\$chrony_svc\""
+
+    for host in "$@"; do
+        if remote_exec "${host}" "${command}"; then
+            success "${host} ${label}"
+        fi
+    done
+}
+
 function config_system() {
     args=($@)
     num=$#
@@ -304,42 +337,26 @@ echo 'Asia/Shanghai' >/etc/timezone"
 
     # ntp
     if [ ! -z "${ntp_server}" ]; then
-        command="if [ -f /etc/chrony.conf ]; then
-    sed -i -e \"/^pool/c\server ${node_ip[0]} iburst\" /etc/chrony.conf
-    systemctl restart chronyd
-    systemctl enable chronyd
-fi"
+        # 所有节点从外部 ntp 服务器同步
+        config_chrony "set ntp client" "server ${ntp_server} iburst" "${args[@]:0:num}"
+    else
+        # 未指定外部 ntp 服务器时，node_ip[0] 作为集群内的时间源
+        ntp_allow=""
+        for ip in "${node_ip[@]}" "${addnode_ip[@]}"; do
+            ntp_allow="${ntp_allow}allow ${ip}"$'\n'
+        done
+        config_chrony "set ntp master" "${ntp_allow}local stratum 10" "${node_ip[0]}"
+
+        ntp_client=()
         for ((i = 0; i < num; i++)); do
-            if remote_exec ${args[${i}]} "${command}"; then
-                success "${args[${i}]} set ntp server"
+            if [ "${args[${i}]}" != "${node_ip[0]}" ]; then
+                ntp_client+=("${args[${i}]}")
             fi
         done
-    fi
 
-    if [ -z "${ntp_server}" ]; then
-        command="if [ -f /etc/chrony.conf ]; then
-    sed -i -e '/^#allow/c\allow 0.0.0.0/0' \
-        -e \"/^pool/c\server ${ntp_server} iburst\"\
-        /etc/chrony.conf
-    systemctl restart chronyd
-    systemctl enable chronyd
-fi"
-
-        if remote_exec ${node_ip[0]} "${command}"; then
-            success "${node_ip[0]} set ntp master"
+        if [ ${#ntp_client[@]} -gt 0 ]; then
+            config_chrony "set ntp slave" "server ${node_ip[0]} iburst" "${ntp_client[@]}"
         fi
-
-        command="if [ -f /etc/chrony.conf ]; then
-    sed -i -e \"/^pool/c\server ${node_ip[0]} iburst\" /etc/chrony.conf
-    systemctl restart chronyd
-    systemctl enable chronyd
-fi"
-
-        for ((i = 1; i < num; i++)); do
-            if remote_exec ${args[${i}]} "${command}"; then
-                success "${args[${i}]} set ntp slave"
-            fi
-        done
     fi
 
     # k8s modules

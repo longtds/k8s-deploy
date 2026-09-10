@@ -38,16 +38,16 @@
 * 离线包存放在target目录下
 
 ## 软件列表
-* etcd                      3.6.x
-* kubernetes                1.35.x
-* containerd                2.x
-* cfssl                     1.6.x
-* nerdctl                   2.x
-* k9s                       0.50.x
-* coredns                   1.13.x
-* calico                    3.31.x
-* metrics-server            0.8.x
-* local-path-provisioner    0.0.32
+* etcd                      3.6.14
+* kubernetes                1.35.8
+* containerd                2.2.1
+* cfssl                     1.6.5
+* nerdctl                   2.2.2
+* k9s                       0.50.18
+* coredns                   1.13.1
+* calico                    3.31.6
+* metrics-server            0.8.1
+* local-path-provisioner    0.0.34
 
 ## 部署模式
 * 前三个节点部署为高可用控制面
