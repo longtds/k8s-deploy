@@ -181,6 +181,7 @@ function make_yaml() {
         sed -e 's#image: quay.io/calico#image: Placeholder_registry/k8s#g' \
             -e 's/# - name: CALICO_IPV4POOL_CIDR/- name: CALICO_IPV4POOL_CIDR/' \
             -e 's@#   value: \"192.168.0.0/16\"@  value: \"10.244.0.0\/16\"@' \
+            -e '/value: "autodetect"/a\            - name: IP_AUTODETECTION_METHOD\n              value: "kubernetes-internal-ip"' \
             ${download_path}/${calico_file} >${pkg_path}/yaml/${calico_file} && success "make ${calico_file}"
     else
         note "yaml ${calico_file} exists"

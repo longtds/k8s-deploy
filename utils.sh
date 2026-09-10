@@ -152,6 +152,49 @@ function check_pkg() {
     done
 }
 
+function check_node_pkg() {
+    h2 "check node dependency"
+
+    # kube-proxy/CNI 运行期强依赖的系统命令，缺失会导致安装"成功"但集群不可用
+    node_bin_list=(iptables socat ipset conntrack)
+    if [ "${kubeproxy_mode}" == "nftables" ]; then
+        node_bin_list+=(nft)
+    fi
+
+    check_failed=0
+    for host in "$@"; do
+        command="for b in ${node_bin_list[*]}; do command -v \${b} >/dev/null 2>&1 || echo \${b}; done
+for b in chronyc; do command -v \${b} >/dev/null 2>&1 || echo \"WARN:\${b}\"; done"
+
+        if ! check_out=$(ssh -i ${ssh_key} -p ${ssh_port} ${ssh_user}@${host} "${command}" 2>/dev/null); then
+            warn "${host} unreachable, check ssh/${ssh_key}"
+            check_failed=1
+            continue
+        fi
+
+        missing=$(echo "${check_out}" | grep -v '^WARN:' | tr '\n' ' ' | sed -e 's/[[:space:]]*$//')
+        missing_warn=$(echo "${check_out}" | sed -n 's/^WARN://p' | tr '\n' ' ' | sed -e 's/[[:space:]]*$//')
+
+        if [ -n "${missing_warn}" ]; then
+            warn "${host} missing optional: ${missing_warn} (time sync will be skipped)"
+        fi
+
+        if [ -n "${missing}" ]; then
+            warn "${host} missing required: ${missing}"
+            check_failed=1
+        else
+            success "${host} dependency ok"
+        fi
+    done
+
+    if [ ${check_failed} -ne 0 ]; then
+        note "install them first, e.g.
+  rhel/anolis/kylin/openeuler:  dnf install -y nftables iptables-nft socat ipset conntrack-tools chrony
+  debian/ubuntu:                apt install -y nftables iptables socat ipset conntrack chrony"
+        error "node dependency check failed"
+    fi
+}
+
 function sync_hosts() {
     args=($@)
     num=$#

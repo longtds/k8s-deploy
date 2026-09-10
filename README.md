@@ -17,7 +17,12 @@
 
 ## 节点要求
 * chrony
-* iptables socat ipset nftables
+* iptables socat ipset conntrack-tools nftables
+* nftables仅kubeproxy_mode=nftables时必需，缺失会导致kube-proxy无法启动
+* deploy.sh install/addnode会预检以上依赖，缺失则中止安装
+* 安装示例
+  * rhel系: dnf install -y nftables iptables-nft socat ipset conntrack-tools chrony
+  * debian系: apt install -y nftables iptables socat ipset conntrack chrony
 
 ## 集群创建
 * 拷贝文件到部署节点
