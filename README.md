@@ -34,8 +34,11 @@
 
 ## 离线包构建
 * docker环境
-* 执行 ./build.sh
-* 离线包存放在target目录下
+* 执行 ./build.sh           构建config.ini中arch指定架构
+* 执行 ./build.sh x86_64    构建x86_64独立离线包
+* 执行 ./build.sh aarch64   构建aarch64独立离线包
+* 执行 ./build.sh all       构建所有架构独立离线包
+* 离线包按架构独立存放在target目录下，包内已固化对应arch
 
 ## 软件列表
 * etcd                      3.6.14

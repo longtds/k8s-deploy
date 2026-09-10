@@ -6,6 +6,7 @@ pkg
 info
 target
 download
+build
 backup
 amd64
 arm64

@@ -14,8 +14,49 @@ else
     error "file config.ini not found."
 fi
 
-download_path=${run_path}/download
-target_path=${run_path}/target
+# 支持构建的架构及默认架构
+support_arch=(x86_64 aarch64)
+default_arch=${arch}
+root_path=${PWD}
+
+function usage() {
+    echo "Usage: $0 [x86_64|aarch64|all ...]"
+    echo "  无参数: 构建config.ini中arch指定的架构"
+    echo "  x86_64: 构建x86_64独立安装包"
+    echo "  aarch64: 构建aarch64独立安装包"
+    echo "  all: 依次构建所有架构的独立安装包"
+    exit 1
+}
+
+function host_arch_name() {
+    case $(uname -m) in
+    x86_64)
+        echo amd64
+        ;;
+    aarch64 | arm64)
+        echo arm64
+        ;;
+    *)
+        error "unsupported host arch $(uname -m)"
+        ;;
+    esac
+}
+
+# 按架构加载配置并隔离构建目录，避免多架构产物混用
+# download为共享目录(文件名已含架构)，build按架构独立
+function load_config() {
+    arch=$1
+    cd ${root_path}
+    source config.ini
+
+    download_path=${run_path}/download
+    build_path=${run_path}/build/${arch_name}
+    pkg_path=${build_path}/pkg
+    registry_path=${build_path}/registry
+    target_path=${run_path}/target
+
+    mkdir -p ${download_path} ${pkg_path} ${registry_path} ${target_path}
+}
 
 function download_file() {
     h2 "download_file"
@@ -187,12 +228,22 @@ function make_image() {
     if [ ! -f ${pkg_path}/image/${image_file} ]; then
         registry_port=5001
         local_reg=127.0.0.1:${registry_port}/k8s
+        build_reg_image=k8s-deploy-registry:${registry_version}
         if docker ps | grep registry | grep 5001; then
             warn "registry already running, remove it"
             docker ps | grep ":${registry_port}" | awk '{print $1}' | xargs docker rm -f
         fi
 
-        if docker run -d -p ${registry_port}:5000 -v ${download_path}/registry:/var/lib/registry ${registry_image}; then
+        # 构建用registry容器需运行在构建机架构上，与目标架构无关
+        build_reg_src=${registry_image}
+        if [ -n "${registry_proxy}" ]; then build_reg_src=${registry_proxy}/${registry_image}; fi
+        if docker pull --platform linux/${host_arch} ${build_reg_src}; then
+            docker tag ${build_reg_src} ${build_reg_image}
+        else
+            error "pull ${build_reg_src} failed"
+        fi
+
+        if docker run -d -p ${registry_port}:5000 -v ${registry_path}:/var/lib/registry ${build_reg_image}; then
             success "start registry" && sleep 5
 
             # pause
@@ -231,9 +282,24 @@ function make_image() {
         sync
 
         # image pkg
-        cd ${download_path} && tar cf ${image_file} registry && mv ${image_file} ${pkg_path}/image/ && success "make image pkg ${image_file}"
+        if tar -C ${build_path} -cf ${pkg_path}/image/${image_file} registry; then
+            success "make image pkg ${image_file}"
+        else
+            error "make image pkg ${image_file} failed"
+        fi
     else
         note "image ${image_file} exists"
+    fi
+}
+
+function make_config() {
+    h2 "make config"
+
+    # 安装包内固化目标架构，避免部署时架构不一致
+    if sed -e "s#^arch=.*#arch=${arch}#" ${run_path}/config.ini >${build_path}/config.ini; then
+        success "make config.ini for ${arch}"
+    else
+        error "make config.ini failed"
     fi
 }
 
@@ -244,9 +310,10 @@ function make_target() {
     target_name=${target_path}/kubernetes-v${kubernetes_version}-$(date +%Y%m%d)-${arch_name}.tgz
 
     if [ -d ${pkg_path} ]; then
-        cd ${run_path}
-        if tar --transform='s,^,k8s-deploy/,' -zcvf ${target_name} deploy.sh config.ini utils.sh uninstall.sh README.md pkg; then
-            success "make target"
+        if tar --transform='s,^,k8s-deploy/,' -zcf ${target_name} \
+            -C ${run_path} deploy.sh utils.sh uninstall.sh README.md \
+            -C ${build_path} config.ini pkg; then
+            success "make target ${target_name}"
         else
             error "make target failed"
         fi
@@ -255,11 +322,37 @@ function make_target() {
     fi
 }
 
-download_file
-make_binary
-make_yaml
-make_tgz
-make_registry
-make_haproxy
-make_image
-make_target
+build_arch=()
+if [ $# -eq 0 ]; then
+    build_arch=(${default_arch})
+else
+    for i in $@; do
+        case ${i} in
+        all)
+            build_arch=(${support_arch[@]})
+            ;;
+        x86_64 | aarch64)
+            build_arch+=(${i})
+            ;;
+        *)
+            usage
+            ;;
+        esac
+    done
+fi
+
+host_arch=$(host_arch_name)
+
+for i in ${build_arch[@]}; do
+    h1 "build ${i}"
+    load_config ${i}
+    download_file
+    make_binary
+    make_yaml
+    make_tgz
+    make_registry
+    make_haproxy
+    make_image
+    make_config
+    make_target
+done
