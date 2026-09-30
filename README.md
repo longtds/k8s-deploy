@@ -8,7 +8,7 @@
 * Debian: 13.2
 
 ## 文件及命令
-* config.yaml        集群配置文件
+* config.ini        集群配置文件
 * deploy.sh install  集群部署
 * deploy.sh addnode  集群添加节点
 * uninstall.sh       集群卸载
@@ -16,13 +16,14 @@
 * Vagrantfile        测试环境快速构建
 
 ## 节点要求
-* chrony
-* iptables socat ipset conntrack-tools nftables
-* nftables仅kubeproxy_mode=nftables时必需，缺失会导致kube-proxy无法启动
-* deploy.sh install/addnode会预检以上依赖，缺失则中止安装
+* 必需(缺失则中止安装): iptables socat ipset conntrack ip
+* nftables: 仅kubeproxy_mode=nftables时必需，且内核需 >= 5.13，缺失会导致kube-proxy无法启动
+* chrony: 可选，缺失仅告警并跳过时间同步
+* deploy.sh install/addnode会预检以上依赖及kubeproxy_mode、内核版本
 * 安装示例
-  * rhel系: dnf install -y nftables iptables-nft socat ipset conntrack-tools chrony
-  * debian系: apt install -y nftables iptables socat ipset conntrack chrony
+  * rhel系: dnf install -y nftables iptables-nft socat ipset conntrack-tools iproute chrony
+  * debian系: apt install -y nftables iptables socat ipset conntrack iproute2 chrony
+  * 注: iproute/iproute2 提供二进制 ip
 
 ## 集群创建
 * 拷贝文件到部署节点

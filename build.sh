@@ -183,6 +183,16 @@ function make_yaml() {
             -e 's@#   value: \"192.168.0.0/16\"@  value: \"10.244.0.0\/16\"@' \
             -e '/value: "autodetect"/a\            - name: IP_AUTODETECTION_METHOD\n              value: "kubernetes-internal-ip"' \
             ${download_path}/${calico_file} >${pkg_path}/yaml/${calico_file} && success "make ${calico_file}"
+
+        # sed 匹配失败不会报错(上游 YAML 结构变更时静默跳过)，断言避免产出缺配置的离线包
+        if ! grep -q 'IP_AUTODETECTION_METHOD' ${pkg_path}/yaml/${calico_file}; then
+            rm -f ${pkg_path}/yaml/${calico_file}
+            error "make ${calico_file}: IP_AUTODETECTION_METHOD not inserted, check upstream yaml"
+        fi
+        if ! grep -q 'Placeholder_registry' ${pkg_path}/yaml/${calico_file}; then
+            rm -f ${pkg_path}/yaml/${calico_file}
+            error "make ${calico_file}: Placeholder_registry not found, image rewrite failed"
+        fi
     else
         note "yaml ${calico_file} exists"
     fi
