@@ -89,16 +89,16 @@ function delete_service() {
     args=($@)
     num=$#
 
-    if remote_exec ${master_node[0]} "if ${install_path}/bin/nerdctl ps | grep registry; then ${install_path}/bin/nerdctl rm -f registry; fi"; then
+    if remote_exec ${master_node[0]} "if ${bin_path}/nerdctl ps | grep registry; then ${bin_path}/nerdctl rm -f registry; fi"; then
         success "removed registry on ${master_node[0]}"
     fi
 
-    command1="rm /lib/systemd/system/{kubelet.service,kube-proxy.service} -rf
+    command1="rm ${systemd_path}/{kubelet.service,kube-proxy.service} -rf
 rm /usr/local/lib/systemd/system/{containerd.service,buildkit.service,stargz-snapshotter.service} -rf
 systemctl daemon-reload"
 
     for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "if ${install_path}/bin/nerdctl ps | grep apiproxy; then ${install_path}/bin/nerdctl rm -f apiproxy; fi"; then
+        if remote_exec ${args[${i}]} "if ${bin_path}/nerdctl ps | grep apiproxy; then ${bin_path}/nerdctl rm -f apiproxy; fi"; then
             success "removed apiproxy on ${args[${i}]}"
         fi
 
@@ -115,7 +115,7 @@ systemctl daemon-reload"
         fi
     done
 
-    command2="rm /lib/systemd/system/{kube-apiserver.service,kube-controller-manager.service,kube-scheduler.service,etcd.service} -rf
+    command2="rm ${systemd_path}/{kube-apiserver.service,kube-controller-manager.service,kube-scheduler.service,etcd.service} -rf
 systemctl daemon-reload"
 
     for i in "${master_node[@]}"; do
@@ -149,7 +149,7 @@ function delete_config() {
     args=($@)
     num=$#
 
-    command="rm ${install_path}/etc -rf
+    command="rm ${conf_path} -rf
 rm /etc/{containerd,cni,crictl.yaml} -rf
 rm /etc/sysctl.d/kubernetes.conf -rf
 rm /etc/modules-load.d/kubernetes.conf -rf"
@@ -166,7 +166,7 @@ function delete_bin() {
 
     command="rm /usr/local/bin/{build*,bypass*,containerd*,ctd*,ctr*,fuse*,gomod*,nerdctl*,rootless*,runc,slirp4*,stargz*,tini} -rf
 rm /opt/{cni,containerd} -rf
-rm ${install_path}/bin/{kube-apiserver,kube-controller-manager,kube-scheduler,kubelet,kube-proxy,kubectl,k9s,cfssl,cfssljson,etcd,etcdctl} -rf"
+rm ${bin_path}/{kube-apiserver,kube-controller-manager,kube-scheduler,kubelet,kube-proxy,kubectl,k9s,cfssl,cfssljson,etcd,etcdctl} -rf"
     for ((i = 0; i < num; i++)); do
         if remote_exec ${args[${i}]} "${command}"; then
             success "deleted bin files on ${args[${i}]}"
@@ -205,15 +205,15 @@ function delete_data() {
     num=$#
 
     for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "rm ${install_path}/etc -rf"; then
+        if remote_exec ${args[${i}]} "rm ${conf_path} -rf"; then
             success "deleted cfg_path on ${args[${i}]}"
         fi
 
-        if remote_exec ${args[${i}]} "rm ${data_path}/etcd -rf"; then
+        if remote_exec ${args[${i}]} "rm ${etcd_data_path} -rf"; then
             success "deleted etcd_data_path on ${args[${i}]}"
         fi
 
-        if remote_exec ${args[${i}]} "rm ${data_path}/registry -rf"; then
+        if remote_exec ${args[${i}]} "rm ${registry_data_path} -rf"; then
             success "deleted registry_path on ${args[${i}]}"
         fi
 

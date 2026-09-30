@@ -50,16 +50,16 @@ function config_etcd() {
 
     if [ ${#master_node[@]} -eq 3 ]; then
         for i in "${master_node[@]}"; do
-            command="cat > /usr/lib/systemd/system/etcd.service <<EOF
+            command="cat > ${systemd_path}/etcd.service <<EOF
 [Unit]
 Description=Etcd Server
 After=network.target
 
 [Service]
 Type=notify
-ExecStart=${install_path}/bin/etcd --name=${node_hostname[${nm}]} \
---data-dir=${data_path}/etcd \
---wal-dir=${data_path}/etcd/wal \
+ExecStart=${bin_path}/etcd --name=${node_hostname[${nm}]} \
+--data-dir=${etcd_data_path} \
+--wal-dir=${etcd_data_path}/wal \
 --listen-peer-urls=https://${i}:2380 \
 --listen-client-urls=https://${i}:2379,http://127.0.0.1:2379 \
 --initial-advertise-peer-urls=https://${i}:2380 \
@@ -67,14 +67,14 @@ ExecStart=${install_path}/bin/etcd --name=${node_hostname[${nm}]} \
 --initial-cluster=${node_hostname[0]}=https://${node_ip[0]}:2380,${node_hostname[1]}=https://${node_ip[1]}:2380,${node_hostname[2]}=https://${node_ip[2]}:2380 \
 --initial-cluster-token=etcd-k8s-cluster \
 --initial-cluster-state=new \
---cert-file=${install_path}/etc/pki/etcd.pem \
---key-file=${install_path}/etc/pki/etcd-key.pem \
+--cert-file=${cert_path}/etcd.pem \
+--key-file=${cert_path}/etcd-key.pem \
 --client-cert-auth=true \
---trusted-ca-file=${install_path}/etc/pki/etcd-ca.pem \
---peer-cert-file=${install_path}/etc/pki/etcd.pem \
---peer-key-file=${install_path}/etc/pki/etcd-key.pem \
+--trusted-ca-file=${cert_path}/etcd-ca.pem \
+--peer-cert-file=${cert_path}/etcd.pem \
+--peer-key-file=${cert_path}/etcd-key.pem \
 --peer-client-cert-auth=true \
---peer-trusted-ca-file=${install_path}/etc/pki/etcd-ca.pem \
+--peer-trusted-ca-file=${cert_path}/etcd-ca.pem \
 --auto-compaction-mode=periodic \
 --auto-compaction-retention=1 \
 --max-request-bytes=33554432 \
@@ -104,16 +104,16 @@ systemctl --no-block restart etcd"
         done
     else
         for i in "${master_node[@]}"; do
-            command="cat > /usr/lib/systemd/system/etcd.service <<EOF
+            command="cat > ${systemd_path}/etcd.service <<EOF
 [Unit]
 Description=Etcd Server
 After=network.target
 
 [Service]
 Type=notify
-ExecStart=${install_path}/bin/etcd --name=${node_hostname[${nm}]} \
---data-dir=${data_path}/etcd \
---wal-dir=${data_path}/etcd/wal \
+ExecStart=${bin_path}/etcd --name=${node_hostname[${nm}]} \
+--data-dir=${etcd_data_path} \
+--wal-dir=${etcd_data_path}/wal \
 --listen-peer-urls=https://${i}:2380 \
 --listen-client-urls=https://${i}:2379,http://127.0.0.1:2379 \
 --initial-advertise-peer-urls=https://${i}:2380 \
@@ -121,14 +121,14 @@ ExecStart=${install_path}/bin/etcd --name=${node_hostname[${nm}]} \
 --initial-cluster=${node_hostname[0]}=https://${node_ip[0]}:2380 \
 --initial-cluster-token=etcd-k8s-cluster \
 --initial-cluster-state=new \
---cert-file=${install_path}/etc/pki/etcd.pem \
---key-file=${install_path}/etc/pki/etcd-key.pem \
+--cert-file=${cert_path}/etcd.pem \
+--key-file=${cert_path}/etcd-key.pem \
 --client-cert-auth=true \
---trusted-ca-file=${install_path}/etc/pki/etcd-ca.pem \
---peer-cert-file=${install_path}/etc/pki/etcd.pem \
---peer-key-file=${install_path}/etc/pki/etcd-key.pem \
+--trusted-ca-file=${cert_path}/etcd-ca.pem \
+--peer-cert-file=${cert_path}/etcd.pem \
+--peer-key-file=${cert_path}/etcd-key.pem \
 --peer-client-cert-auth=true \
---peer-trusted-ca-file=${install_path}/etc/pki/etcd-ca.pem \
+--peer-trusted-ca-file=${cert_path}/etcd-ca.pem \
 --auto-compaction-mode=periodic \
 --auto-compaction-retention=1 \
 --max-request-bytes=33554432 \
@@ -158,10 +158,10 @@ systemctl restart etcd"
     fi
 
     if [ ${#master_node[@]} -eq 3 ]; then
-        command="ETCDCTL_API=3 ${install_path}/bin/etcdctl \
---cacert=${install_path}/etc/pki/etcd-ca.pem \
---cert=${install_path}/etc/pki/etcd.pem \
---key=${install_path}/etc/pki/etcd-key.pem \
+        command="ETCDCTL_API=3 ${bin_path}/etcdctl \
+--cacert=${cert_path}/etcd-ca.pem \
+--cert=${cert_path}/etcd.pem \
+--key=${cert_path}/etcd-key.pem \
 --endpoints="https://${node_ip[0]}:2379,https://${node_ip[1]}:2379,https://${node_ip[2]}:2379" \
 endpoint status --write-out=table"
 
@@ -176,10 +176,10 @@ endpoint status --write-out=table"
         done
         error "etcd cluster failed to become ready on ${node_ip[0]}"
     else
-        command="ETCDCTL_API=3 ${install_path}/bin/etcdctl \
---cacert=${install_path}/etc/pki/etcd-ca.pem \
---cert=${install_path}/etc/pki/etcd.pem \
---key=${install_path}/etc/pki/etcd-key.pem \
+        command="ETCDCTL_API=3 ${bin_path}/etcdctl \
+--cacert=${cert_path}/etcd-ca.pem \
+--cert=${cert_path}/etcd.pem \
+--key=${cert_path}/etcd-key.pem \
 --endpoints="https://${node_ip[0]}:2379" \
 endpoint status --write-out=table"
 
@@ -192,10 +192,10 @@ endpoint status --write-out=table"
 function config_apiserver() {
     if [ ${#master_node[@]} -eq 3 ]; then
         for i in "${master_node[@]}"; do
-            command="cat > ${install_path}/etc/token.csv <<EOF
+            command="cat > ${conf_path}/token.csv <<EOF
 ${kube_token},kubelet-bootstrap,10001,\"system:kubelet-bootstrap\"
 EOF
-cat > /usr/lib/systemd/system/kube-apiserver.service << EOF
+cat > ${systemd_path}/kube-apiserver.service << EOF
 [Unit]
 Description=Kubernetes API Server
 Documentation=https://github.com/kubernetes/kubernetes
@@ -203,12 +203,12 @@ After=network.target
 Wants=etcd.service
 
 [Service]
-ExecStart=${install_path}/bin/kube-apiserver \
+ExecStart=${bin_path}/kube-apiserver \
 --apiserver-count=3 \
 --etcd-servers=https://${node_ip[0]}:2379,https://${node_ip[1]}:2379,https://${node_ip[2]}:2379 \
---etcd-cafile=${install_path}/etc/pki/etcd-ca.pem \
---etcd-certfile=${install_path}/etc/pki/etcd.pem \
---etcd-keyfile=${install_path}/etc/pki/etcd-key.pem \
+--etcd-cafile=${cert_path}/etcd-ca.pem \
+--etcd-certfile=${cert_path}/etcd.pem \
+--etcd-keyfile=${cert_path}/etcd-key.pem \
 --advertise-address=${i} \
 --anonymous-auth=false \
 --allow-privileged=true \
@@ -216,19 +216,19 @@ ExecStart=${install_path}/bin/kube-apiserver \
 --enable-admission-plugins=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota,NodeRestriction,DefaultTolerationSeconds,DefaultStorageClass \
 --authorization-mode=RBAC,Node \
 --enable-bootstrap-token-auth=true \
---token-auth-file=${install_path}/etc/token.csv \
---kubelet-client-certificate=${install_path}/etc/pki/kube-apiserver.pem \
---kubelet-client-key=${install_path}/etc/pki/kube-apiserver-key.pem \
---tls-cert-file=${install_path}/etc/pki/kube-apiserver.pem  \
---tls-private-key-file=${install_path}/etc/pki/kube-apiserver-key.pem \
+--token-auth-file=${conf_path}/token.csv \
+--kubelet-client-certificate=${cert_path}/kube-apiserver.pem \
+--kubelet-client-key=${cert_path}/kube-apiserver-key.pem \
+--tls-cert-file=${cert_path}/kube-apiserver.pem  \
+--tls-private-key-file=${cert_path}/kube-apiserver-key.pem \
 --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 \
---client-ca-file=${install_path}/etc/pki/ca.pem \
+--client-ca-file=${cert_path}/ca.pem \
 --service-account-issuer=https://kubernetes.default.svc.cluster.local \
---service-account-signing-key-file=${install_path}/etc/pki/sa.key \
---service-account-key-file=${install_path}/etc/pki/sa.pub \
---proxy-client-cert-file=${install_path}/etc/pki/kube-apiserver.pem \
---proxy-client-key-file=${install_path}/etc/pki/kube-apiserver-key.pem \
---requestheader-client-ca-file=${install_path}/etc/pki/ca.pem \
+--service-account-signing-key-file=${cert_path}/sa.key \
+--service-account-key-file=${cert_path}/sa.pub \
+--proxy-client-cert-file=${cert_path}/kube-apiserver.pem \
+--proxy-client-key-file=${cert_path}/kube-apiserver-key.pem \
+--requestheader-client-ca-file=${cert_path}/ca.pem \
 --requestheader-allowed-names=kubernetes \
 --requestheader-extra-headers-prefix=X-Remote-Extra- \
 --requestheader-group-headers=X-Remote-Group \
@@ -259,10 +259,10 @@ systemctl restart kube-apiserver"
         done
     else
         for i in "${master_node[@]}"; do
-            command="cat > ${install_path}/etc/token.csv <<EOF
+            command="cat > ${conf_path}/token.csv <<EOF
 ${kube_token},kubelet-bootstrap,10001,\"system:kubelet-bootstrap\"
 EOF
-cat > /usr/lib/systemd/system/kube-apiserver.service << EOF
+cat > ${systemd_path}/kube-apiserver.service << EOF
 [Unit]
 Description=Kubernetes API Server
 Documentation=https://github.com/kubernetes/kubernetes
@@ -270,12 +270,12 @@ After=network.target
 Wants=etcd.service
 
 [Service]
-ExecStart=${install_path}/bin/kube-apiserver \
+ExecStart=${bin_path}/kube-apiserver \
 --apiserver-count=1 \
 --etcd-servers=https://${node_ip[0]}:2379 \
---etcd-cafile=${install_path}/etc/pki/etcd-ca.pem \
---etcd-certfile=${install_path}/etc/pki/etcd.pem \
---etcd-keyfile=${install_path}/etc/pki/etcd-key.pem \
+--etcd-cafile=${cert_path}/etcd-ca.pem \
+--etcd-certfile=${cert_path}/etcd.pem \
+--etcd-keyfile=${cert_path}/etcd-key.pem \
 --advertise-address=${i} \
 --anonymous-auth=false \
 --allow-privileged=true \
@@ -283,19 +283,19 @@ ExecStart=${install_path}/bin/kube-apiserver \
 --enable-admission-plugins=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota,NodeRestriction \
 --authorization-mode=RBAC,Node \
 --enable-bootstrap-token-auth=true \
---token-auth-file=${install_path}/etc/token.csv \
---kubelet-client-certificate=${install_path}/etc/pki/kube-apiserver.pem \
---kubelet-client-key=${install_path}/etc/pki/kube-apiserver-key.pem \
---tls-cert-file=${install_path}/etc/pki/kube-apiserver.pem  \
---tls-private-key-file=${install_path}/etc/pki/kube-apiserver-key.pem \
+--token-auth-file=${conf_path}/token.csv \
+--kubelet-client-certificate=${cert_path}/kube-apiserver.pem \
+--kubelet-client-key=${cert_path}/kube-apiserver-key.pem \
+--tls-cert-file=${cert_path}/kube-apiserver.pem  \
+--tls-private-key-file=${cert_path}/kube-apiserver-key.pem \
 --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 \
---client-ca-file=${install_path}/etc/pki/ca.pem \
+--client-ca-file=${cert_path}/ca.pem \
 --service-account-issuer=https://kubernetes.default.svc.cluster.local \
---service-account-signing-key-file=${install_path}/etc/pki/sa.key \
---service-account-key-file=${install_path}/etc/pki/sa.pub \
---proxy-client-cert-file=${install_path}/etc/pki/kube-apiserver.pem \
---proxy-client-key-file=${install_path}/etc/pki/kube-apiserver-key.pem \
---requestheader-client-ca-file=${install_path}/etc/pki/ca.pem \
+--service-account-signing-key-file=${cert_path}/sa.key \
+--service-account-key-file=${cert_path}/sa.pub \
+--proxy-client-cert-file=${cert_path}/kube-apiserver.pem \
+--proxy-client-key-file=${cert_path}/kube-apiserver-key.pem \
+--requestheader-client-ca-file=${cert_path}/ca.pem \
 --requestheader-allowed-names=kubernetes \
 --requestheader-extra-headers-prefix=X-Remote-Extra- \
 --requestheader-group-headers=X-Remote-Group \
@@ -339,7 +339,7 @@ function config_containerd() {
                 -e "s#level = ''#level = 'error'#g" \
                 -e "s#device_ownership_from_security_context = false#device_ownership_from_security_context = true#g" \
                 /tmp/config.toml
-            echo -e "server = \"https://${registry}\"\n\n[host.\"https://${registry}\"]\n  capabilities = [\"pull\", \"resolve\", \"push\"]\n  ca = \"${install_path}/etc/pki/ca.pem\"" >/tmp/hosts.toml
+            echo -e "server = \"https://${registry}\"\n\n[host.\"https://${registry}\"]\n  capabilities = [\"pull\", \"resolve\", \"push\"]\n  ca = \"${cert_path}/ca.pem\"" >/tmp/hosts.toml
         fi
     fi
 
@@ -374,7 +374,7 @@ function config_apiproxy() {
     if [ ${#master_node[@]} -eq 3 ]; then
         command="if ! /usr/local/bin/nerdctl ps |grep apiproxy; then
     /usr/local/bin/nerdctl load -i /tmp/${haproxy_file}
-    cat > ${install_path}/etc/haproxy.cfg <<EOF
+    cat > ${conf_path}/haproxy.cfg <<EOF
 global
     maxconn 2000
     log 127.0.0.1 local0 err
@@ -413,7 +413,7 @@ backend k8s-master
     server  ${node_hostname[2]}  ${node_ip[2]}:6443 check
 EOF
     /usr/local/bin/nerdctl run -d --name apiproxy --net host --restart always \
-    -v ${install_path}/etc/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg haproxy:${haproxy_version}
+    -v ${conf_path}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg haproxy:${haproxy_version}
 fi"
 
         for ((i = 0; i < num; i++)); do
@@ -425,40 +425,40 @@ fi"
 }
 
 function config_controller() {
-    command="${install_path}/bin/kubectl config set-cluster kubernetes \
-  --certificate-authority=${install_path}/etc/pki/ca.pem \
+    command="${bin_path}/kubectl config set-cluster kubernetes \
+  --certificate-authority=${cert_path}/ca.pem \
   --embed-certs=true \
   --server=${apiserver_url} \
-  --kubeconfig=${install_path}/etc/kube-controller-manager.kubeconfig
-${install_path}/bin/kubectl config set-credentials kube-controller-manager \
-  --client-certificate=${install_path}/etc/pki/kube-controller-manager.pem \
-  --client-key=${install_path}/etc/pki/kube-controller-manager-key.pem \
+  --kubeconfig=${conf_path}/kube-controller-manager.kubeconfig
+${bin_path}/kubectl config set-credentials kube-controller-manager \
+  --client-certificate=${cert_path}/kube-controller-manager.pem \
+  --client-key=${cert_path}/kube-controller-manager-key.pem \
   --embed-certs=true \
-  --kubeconfig=${install_path}/etc/kube-controller-manager.kubeconfig
-${install_path}/bin/kubectl config set-context default \
+  --kubeconfig=${conf_path}/kube-controller-manager.kubeconfig
+${bin_path}/kubectl config set-context default \
   --cluster=kubernetes \
   --user=kube-controller-manager \
-  --kubeconfig=${install_path}/etc/kube-controller-manager.kubeconfig
-${install_path}/bin/kubectl config use-context default \
-  --kubeconfig=${install_path}/etc/kube-controller-manager.kubeconfig
-cat > /usr/lib/systemd/system/kube-controller-manager.service << EOF
+  --kubeconfig=${conf_path}/kube-controller-manager.kubeconfig
+${bin_path}/kubectl config use-context default \
+  --kubeconfig=${conf_path}/kube-controller-manager.kubeconfig
+cat > ${systemd_path}/kube-controller-manager.service << EOF
 [Unit]
 Description=Kubernetes Controller Manager
 Documentation=https://github.com/kubernetes/kubernetes
 After=network.target
 
 [Service]
-ExecStart=${install_path}/bin/kube-controller-manager \
+ExecStart=${bin_path}/kube-controller-manager \
 --bind-address=0.0.0.0 \
---kubeconfig=${install_path}/etc/kube-controller-manager.kubeconfig \
+--kubeconfig=${conf_path}/kube-controller-manager.kubeconfig \
 --allocate-node-cidrs=true \
 --cluster-cidr=10.244.0.0/16 \
 --service-cluster-ip-range=10.96.0.0/16 \
---cluster-signing-cert-file=${install_path}/etc/pki/ca.pem \
---cluster-signing-key-file=${install_path}/etc/pki/ca-key.pem \
+--cluster-signing-cert-file=${cert_path}/ca.pem \
+--cluster-signing-key-file=${cert_path}/ca-key.pem \
 --cluster-signing-duration=876000h0m0s \
---root-ca-file=${install_path}/etc/pki/ca.pem \
---service-account-private-key-file=${install_path}/etc/pki/sa.key \
+--root-ca-file=${cert_path}/ca.pem \
+--service-account-private-key-file=${cert_path}/sa.key \
 --use-service-account-credentials=true \
 --controllers=*,bootstrapsigner,tokencleaner \
 --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
@@ -485,32 +485,32 @@ systemctl restart kube-controller-manager"
 }
 
 function config_scheduler() {
-    command="${install_path}/bin/kubectl config set-cluster kubernetes \
-  --certificate-authority=${install_path}/etc/pki/ca.pem \
+    command="${bin_path}/kubectl config set-cluster kubernetes \
+  --certificate-authority=${cert_path}/ca.pem \
   --embed-certs=true \
   --server=${apiserver_url} \
-  --kubeconfig=${install_path}/etc/kube-scheduler.kubeconfig
-${install_path}/bin/kubectl config set-credentials kube-scheduler \
-  --client-certificate=${install_path}/etc/pki/kube-scheduler.pem \
-  --client-key=${install_path}/etc/pki/kube-scheduler-key.pem \
+  --kubeconfig=${conf_path}/kube-scheduler.kubeconfig
+${bin_path}/kubectl config set-credentials kube-scheduler \
+  --client-certificate=${cert_path}/kube-scheduler.pem \
+  --client-key=${cert_path}/kube-scheduler-key.pem \
   --embed-certs=true \
-  --kubeconfig=${install_path}/etc/kube-scheduler.kubeconfig
-${install_path}/bin/kubectl config set-context default \
+  --kubeconfig=${conf_path}/kube-scheduler.kubeconfig
+${bin_path}/kubectl config set-context default \
   --cluster=kubernetes \
   --user=kube-scheduler \
-  --kubeconfig=${install_path}/etc/kube-scheduler.kubeconfig
-${install_path}/bin/kubectl config use-context default \
-  --kubeconfig=${install_path}/etc/kube-scheduler.kubeconfig
-cat > /usr/lib/systemd/system/kube-scheduler.service << EOF
+  --kubeconfig=${conf_path}/kube-scheduler.kubeconfig
+${bin_path}/kubectl config use-context default \
+  --kubeconfig=${conf_path}/kube-scheduler.kubeconfig
+cat > ${systemd_path}/kube-scheduler.service << EOF
 [Unit]
 Description=Kubernetes Scheduler
 Documentation=https://github.com/kubernetes/kubernetes
 After=network.target
 
 [Service]
-ExecStart=${install_path}/bin/kube-scheduler \
+ExecStart=${bin_path}/kube-scheduler \
 --bind-address=0.0.0.0 \
---kubeconfig=${install_path}/etc/kube-scheduler.kubeconfig \
+--kubeconfig=${conf_path}/kube-scheduler.kubeconfig \
 --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
 
 Restart=on-failure
@@ -535,30 +535,30 @@ systemctl restart kube-scheduler"
 
 function config_kubeconfig() {
     for i in "${master_node[@]}"; do
-        command="${install_path}/bin/kubectl config set-cluster kubernetes \
-  --certificate-authority=${install_path}/etc/pki/ca.pem \
+        command="${bin_path}/kubectl config set-cluster kubernetes \
+  --certificate-authority=${cert_path}/ca.pem \
   --embed-certs=true \
   --server=https://${i}:6443 \
-  --kubeconfig=${install_path}/etc/admin.kubeconfig
-${install_path}/bin/kubectl config set-credentials kubernetes-admin \
-  --client-certificate=${install_path}/etc/pki/admin.pem \
-  --client-key=${install_path}/etc/pki/admin-key.pem \
+  --kubeconfig=${conf_path}/admin.kubeconfig
+${bin_path}/kubectl config set-credentials kubernetes-admin \
+  --client-certificate=${cert_path}/admin.pem \
+  --client-key=${cert_path}/admin-key.pem \
   --embed-certs=true \
-  --kubeconfig=${install_path}/etc/admin.kubeconfig
-${install_path}/bin/kubectl config set-context default \
+  --kubeconfig=${conf_path}/admin.kubeconfig
+${bin_path}/kubectl config set-context default \
   --cluster=kubernetes \
   --user=kubernetes-admin \
-  --kubeconfig=${install_path}/etc/admin.kubeconfig
-${install_path}/bin/kubectl config use-context default \
-  --kubeconfig=${install_path}/etc/admin.kubeconfig
-mkdir -p ~/.kube && \cp ${install_path}/etc/admin.kubeconfig ~/.kube/config
-${install_path}/bin/kubectl get cs"
+  --kubeconfig=${conf_path}/admin.kubeconfig
+${bin_path}/kubectl config use-context default \
+  --kubeconfig=${conf_path}/admin.kubeconfig
+mkdir -p ~/.kube && \cp ${conf_path}/admin.kubeconfig ~/.kube/config
+${bin_path}/kubectl get cs"
         if remote_exec ${i} "${command}"; then
             success "${i} kubeconfig setted"
         fi
     done
 
-    scp -i ${ssh_key} -P ${ssh_port} ${ssh_user}@${node_ip[0]}:${install_path}/etc/admin.kubeconfig ${run_path}/admin.kubeconfig
+    scp -i ${ssh_key} -P ${ssh_port} ${ssh_user}@${node_ip[0]}:${conf_path}/admin.kubeconfig ${run_path}/admin.kubeconfig
 
     if ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get cs; then
         success "local kubeconfig setted"
@@ -688,7 +688,7 @@ roleRef:
 ' | ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig apply -f -
 
     for ((i = 0; i < num; i++)); do
-        if remote_cp "${kubelet_bootstrap_kubeconfig}" "${args[${i}]}:${install_path}/etc/kubelet-bootstrap.kubeconfig"; then
+        if remote_cp "${kubelet_bootstrap_kubeconfig}" "${args[${i}]}:${conf_path}/kubelet-bootstrap.kubeconfig"; then
             success "${args[${i}]} kubelet-bootstrap synced"
         fi
 
@@ -700,7 +700,7 @@ roleRef:
             resolv_conf=/etc/resolv.conf
         fi
 
-        command="cat > ${install_path}/etc/kubelet-config.yml << EOF
+        command="cat > ${conf_path}/kubelet-config.yml << EOF
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 address: 0.0.0.0
@@ -713,7 +713,7 @@ authentication:
     cacheTTL: 2m0s
     enabled: true
   x509:
-    clientCAFile: ${install_path}/etc/pki/ca.pem 
+    clientCAFile: ${cert_path}/ca.pem 
 authorization:
   mode: Webhook
   webhook:
@@ -739,7 +739,7 @@ maxPods: 200
 oomScoreAdj: -999
 podPidsLimit: -1
 EOF
-cat > /usr/lib/systemd/system/kubelet.service << EOF
+cat > ${systemd_path}/kubelet.service << EOF
 [Unit]
 Description=Kubernetes Kubelet
 Documentation=https://github.com/kubernetes/kubernetes
@@ -747,12 +747,12 @@ After=containerd.service
 Requires=containerd.service
 
 [Service]
-ExecStart=${install_path}/bin/kubelet \
---kubeconfig=${install_path}/etc/kubelet.kubeconfig \
---bootstrap-kubeconfig=${install_path}/etc/kubelet-bootstrap.kubeconfig \
---config=${install_path}/etc/kubelet-config.yml \
+ExecStart=${bin_path}/kubelet \
+--kubeconfig=${conf_path}/kubelet.kubeconfig \
+--bootstrap-kubeconfig=${conf_path}/kubelet-bootstrap.kubeconfig \
+--config=${conf_path}/kubelet-config.yml \
 --container-runtime-endpoint=/run/containerd/containerd.sock \
---cert-dir=${install_path}/etc/pki \
+--cert-dir=${cert_path} \
 --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 \
 --node-labels=node.kubernetes.io/node=
 
@@ -814,7 +814,7 @@ function config_kubeproxy() {
     ${pkg_path}/bin/kubectl config use-context default \
         --kubeconfig=${kube_proxy_kubeconfig}
 
-    command="cat > ${install_path}/etc/kube-proxy.yaml << EOF
+    command="cat > ${conf_path}/kube-proxy.yaml << EOF
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
 kind: KubeProxyConfiguration
 bindAddress: 0.0.0.0
@@ -822,7 +822,7 @@ clientConnection:
   acceptContentTypes: \"\"
   burst: 10
   contentType: application/vnd.kubernetes.protobuf
-  kubeconfig: ${install_path}/etc/kube-proxy.kubeconfig
+  kubeconfig: ${conf_path}/kube-proxy.kubeconfig
   qps: 5
 clusterCIDR: 10.244.0.0/16
 configSyncPeriod: 15m0s
@@ -847,15 +847,15 @@ hostnameOverride: \"\"
 mode: \"${kubeproxy_mode}\"
 oomScoreAdj: -999
 EOF
-cat > /usr/lib/systemd/system/kube-proxy.service << EOF
+cat > ${systemd_path}/kube-proxy.service << EOF
 [Unit]
 Description=Kubernetes Kube-Proxy Server
 Documentation=https://github.com/kubernetes/kubernetes
 After=network.target
 
 [Service]
-ExecStart=${install_path}/bin/kube-proxy \
---config=${install_path}/etc/kube-proxy.yaml
+ExecStart=${bin_path}/kube-proxy \
+--config=${conf_path}/kube-proxy.yaml
 
 Restart=on-failure
 RestartSec=10
@@ -871,7 +871,7 @@ systemctl enable kube-proxy
 systemctl restart kube-proxy"
 
     for ((i = 0; i < num; i++)); do
-        if remote_cp "${kube_proxy_kubeconfig}" "${args[${i}]}:${install_path}/etc/kube-proxy.kubeconfig"; then
+        if remote_cp "${kube_proxy_kubeconfig}" "${args[${i}]}:${conf_path}/kube-proxy.kubeconfig"; then
             success "${args[${i}]} kube-proxy synced"
         fi
 
@@ -891,9 +891,9 @@ function config_registry() {
   -e REGISTRY_STORAGE_DELETE_ENABLED=true \
   -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/server.pem \
   -e REGISTRY_HTTP_TLS_KEY=/certs/server-key.pem \
-  -v ${install_path}/etc/pki/registry.pem:/certs/server.pem \
-  -v ${install_path}/etc/pki/registry-key.pem:/certs/server-key.pem \
-  -v ${data_path}/registry:/var/lib/registry \
+  -v ${cert_path}/registry.pem:/certs/server.pem \
+  -v ${cert_path}/registry-key.pem:/certs/server-key.pem \
+  -v ${registry_data_path}:/var/lib/registry \
   --restart always registry:${registry_version}
 fi"
 

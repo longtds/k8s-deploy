@@ -854,33 +854,33 @@ function sync_certs() {
     args=($@)
     num=$#
 
-    command1="mkdir -p ${install_path}/etc/pki"
+    command1="mkdir -p ${cert_path}"
 
     # Update ca-trust
     command2="if [ -d /etc/pki/ca-trust ]; then
     if update-ca-trust force-enable; then
-        \cp -f ${install_path}/etc/pki/ca.pem /etc/pki/ca-trust/source/anchors/k8s-ca.pem
-        \cp -f ${install_path}/etc/pki/etcd-ca.pem /etc/pki/ca-trust/source/anchors/etcd-ca.pem
+        \cp -f ${cert_path}/ca.pem /etc/pki/ca-trust/source/anchors/k8s-ca.pem
+        \cp -f ${cert_path}/etcd-ca.pem /etc/pki/ca-trust/source/anchors/etcd-ca.pem
         update-ca-trust extract
     else
-        cat ${install_path}/etc/pki/ca.pem >>/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
-        cat ${install_path}/etc/pki/etcd-ca.pem >>/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+        cat ${cert_path}/ca.pem >>/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+        cat ${cert_path}/etcd-ca.pem >>/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
     fi
 fi
 if [ -d /usr/local/share/ca-certificates ]; then
     if [ ! -f /usr/local/share/ca-certificates/k8s.crt ];then
-        \cp -f ${install_path}/etc/pki/ca.pem /usr/local/share/ca-certificates/k8s.crt
-        \cp -f ${install_path}/etc/pki/etcd-ca.pem /usr/local/share/ca-certificates/etcd.crt
+        \cp -f ${cert_path}/ca.pem /usr/local/share/ca-certificates/k8s.crt
+        \cp -f ${cert_path}/etcd-ca.pem /usr/local/share/ca-certificates/etcd.crt
         update-ca-certificates
     fi
 fi"
 
     for ((i = 0; i < num; i++)); do
         if remote_exec ${args[${i}]} "${command1}"; then
-            success "${args[${i}]} ${install_path}/etc created"
+            success "${args[${i}]} ${cert_path} created"
         fi
 
-        if remote_cp "${pki_path}" "${args[${i}]}:${install_path}/etc" -r; then
+        if remote_cp "${pki_path}" "${args[${i}]}:${conf_path}" -r; then
             success "${args[${i}]} pki copied"
         fi
 
@@ -895,15 +895,13 @@ function sync_pkg() {
     args=($@)
     num=$#
 
-    command1="mkdir -p ${install_path}/bin"
-    command2="tar xf /tmp/${nerdctl_file} -C /usr/local/"
+    command1="tar xf /tmp/${nerdctl_file} -C /usr/local/"
+    command2="mkdir -p ${bin_path} && cp -f /tmp/k8s-bin/* ${bin_path}/ && rm -rf /tmp/k8s-bin"
 
     for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command1}"; then
-            success "${args[${i}]} ${install_path}/bin created"
-        fi
-
-        if remote_cp "${pkg_path}/bin" "${args[${i}]}:${install_path}/" -r; then
+        if remote_exec ${args[${i}]} "rm -rf /tmp/k8s-bin" &&
+            remote_cp "${pkg_path}/bin" "${args[${i}]}:/tmp/k8s-bin" -r &&
+            remote_exec ${args[${i}]} "${command2}"; then
             success "${args[${i}]} ${pkg_path}/bin copied"
         fi
 
@@ -912,12 +910,12 @@ function sync_pkg() {
         fi
 
         if remote_cp "${pkg_path}/tgz/${nerdctl_file}" "${args[${i}]}:/tmp/${nerdctl_file}"; then
-            remote_exec ${args[${i}]} "${command2}"
+            remote_exec ${args[${i}]} "${command1}"
             success "${args[${i}]} ${nerdctl_file} copied"
         fi
     done
 
-    command3="mkdir -p ${data_path}/registry && tar xf /tmp/${image_file} -C ${data_path}/registry --strip-components=1"
+    command3="mkdir -p ${registry_data_path} && tar xf /tmp/${image_file} -C ${registry_data_path} --strip-components=1"
 
     if remote_cp "${pkg_path}/image/${image_file}" "${master_node[0]}:/tmp/${image_file}" &&
         remote_exec ${master_node[0]} "${command3}"; then
