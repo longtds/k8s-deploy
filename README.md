@@ -8,12 +8,13 @@
 * Debian: 13.2
 
 ## 文件及命令
-* config.ini        集群配置文件
-* deploy.sh install  集群部署
-* deploy.sh addnode  集群添加节点
-* uninstall.sh       集群卸载
-* build.sh           离线包构建
-* Vagrantfile        测试环境快速构建
+* config.ini              集群配置文件
+* deploy.sh install       集群部署
+* deploy.sh addnode       集群添加节点
+* uninstall.sh            集群卸载(仅初始节点)
+* uninstall.sh all        集群卸载(含 addnode 节点)
+* build.sh                离线包构建
+* Vagrantfile             测试环境快速构建
 
 ## 节点要求
 * 必需(缺失则中止安装): iptables socat ipset conntrack ip
@@ -28,6 +29,7 @@
 ## 集群创建
 * 拷贝文件到部署节点
 * 修改config.ini文件中node_ip和node_hostname和其它配置
+* kubeproxy_mode选择iptables或nftables(默认nftables, 节点内核需 >= 5.13)
 * 配置部署节点root免密登录所有节点
 * 执行 ./deploy.sh install
 
@@ -41,7 +43,8 @@
 * 执行 ./deploy.sh addnode
 
 ## 卸载集群
-* 执行 ./uninstall.sh
+* 执行 ./uninstall.sh       卸载初始节点(删除本机pki/、admin.kubeconfig、hosts)
+* 执行 ./uninstall.sh all   同时卸载 addnode 节点
 
 ## 离线包构建
 * docker环境
@@ -51,17 +54,20 @@
 * 执行 ./build.sh all       构建所有架构独立离线包
 * 离线包按架构独立存放在target目录下，包内已固化对应arch
 
-## 软件列表
+## 软件列表(版本以config.ini为准)
 * etcd                      3.6.14
 * kubernetes                1.35.8
-* containerd                2.2.1
-* cfssl                     1.6.5
+* containerd                2.2.1   (随nerdctl-full捆绑)
 * nerdctl                   2.2.2
+* cfssl                     1.6.5
 * k9s                       0.50.18
-* coredns                   1.13.1
 * calico                    3.31.6
+* coredns                   1.13.1
 * metrics-server            0.8.1
 * local-path-provisioner    0.0.34
+* registry                  2.8.3   (私有镜像仓库, 部署于首节点:5000)
+* haproxy                   3.2.13  (三master时的apiserver本地代理)
+* pause                     3.10.1
 
 ## 部署模式
 * 前三个节点部署为高可用控制面
