@@ -102,6 +102,13 @@ function remote_exec() {
     fi
 }
 
+# 执行远程命令并返回其标准输出(用于读取远端检测结果)
+function remote_capture() {
+    local host=$1
+    local cmd=$2
+    ssh -i ${ssh_key} -p ${ssh_port} ${ssh_user}@${host} "${cmd}" 2>/dev/null
+}
+
 function remote_cp() {
     local src=$1
     local dst=$2
@@ -261,8 +268,8 @@ cat >>\"\$chrony_conf\" <<EOF
 ${directives}
 # END k8s-deploy
 EOF
-systemctl restart \"\$chrony_svc\"
-systemctl enable \"\$chrony_svc\""
+systemctl enable \"\$chrony_svc\"
+systemctl restart \"\$chrony_svc\""
 
     for host in "$@"; do
         if remote_exec "${host}" "${command}"; then
@@ -297,7 +304,7 @@ function config_system() {
     done
 
     for ((i = 0; i < num; i++)); do
-        if remote_cp "/etc/hosts" "${args[${i}]}:/etc/hosts"; then
+        if remote_cp "hosts" "${args[${i}]}:/etc/hosts"; then
             success "${args[${i}]} /etc/hosts"
         fi
     done
@@ -389,9 +396,9 @@ EOF"
     done
 
     command="if [ -f /etc/systemd/system.conf ]; then
-    sed  's/.*DefaultLimitNOFILE=.*/DefaultLimitNOFILE=65536/' /etc/systemd/system.conf
+    sed -i 's/.*DefaultLimitNOFILE=.*/DefaultLimitNOFILE=65536/' /etc/systemd/system.conf
 elif [ -f /lib/systemd/system.conf ]; then
-    sed  's/.*DefaultLimitNOFILE=.*/DefaultLimitNOFILE=65536/' /lib/systemd/system.conf
+    sed -i 's/.*DefaultLimitNOFILE=.*/DefaultLimitNOFILE=65536/' /lib/systemd/system.conf
 fi
 systemctl daemon-reload"
 

@@ -14,6 +14,25 @@ else
     error "file config.ini not found."
 fi
 
+# kube_token 为空(或仍为历史公开默认值)时, 按优先级取用/生成 token 并持久化到 pki/kube_token,
+# 后续 install/addnode 复用同一 token(apiserver token.csv 与 kubelet bootstrap kubeconfig 必须一致):
+#   config.ini 显式值 > pki/kube_token > 已有 kubelet-bootstrap.kubeconfig 中的 token(兼容旧版本安装的集群) > 随机生成
+if [ $# -eq 1 ] && { [ -z "${kube_token}" ] || [ "${kube_token}" == "e3b0c44298fc1c149afbf4c8996fb924" ]; }; then
+    if [ -f ${pki_path}/kube_token ]; then
+        kube_token=$(cat ${pki_path}/kube_token)
+    elif [ -f ${pki_path}/kubelet-bootstrap.kubeconfig ]; then
+        kube_token=$(awk '/token:/ {print $2; exit}' ${pki_path}/kubelet-bootstrap.kubeconfig)
+    fi
+    if [ -z "${kube_token}" ]; then
+        mkdir -p ${pki_path}
+        kube_token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    fi
+    if ! printf '%s\n' "${kube_token}" >${pki_path}/kube_token; then
+        error "save kube_token to ${pki_path}/kube_token failed"
+    fi
+    chmod 600 ${pki_path}/kube_token
+fi
+
 if [ ${#node_ip[@]} -ge 3 ]; then
     master_node=(${node_ip[0]} ${node_ip[1]} ${node_ip[2]})
     apiserver_url=https://127.0.0.1:8443
@@ -75,8 +94,8 @@ Alias=etcd3.service
 
 EOF
 systemctl daemon-reload
-systemctl restart etcd
-systemctl enable etcd"
+systemctl enable etcd
+systemctl --no-block restart etcd"
 
             if remote_exec ${i} "${command}"; then
                 success "${i} etcd service started"
@@ -129,8 +148,8 @@ Alias=etcd3.service
 
 EOF
 systemctl daemon-reload
-systemctl restart etcd
-systemctl enable etcd"
+systemctl enable etcd
+systemctl restart etcd"
 
             if remote_exec ${i} "${command}"; then
                 success "${i} etcd service started"
@@ -146,9 +165,16 @@ systemctl enable etcd"
 --endpoints="https://${node_ip[0]}:2379,https://${node_ip[1]}:2379,https://${node_ip[2]}:2379" \
 endpoint status --write-out=table"
 
-        if remote_exec ${node_ip[0]} "${command}"; then
-            success "etcd cluster started"
-        fi
+        # etcd 为 Type=notify 且 READY 需 raft 发布成员信息(quorum),
+        # 三 master 首次启动用 --no-block, 这里轮询等待集群就绪
+        for ((retry = 0; retry < 30; retry++)); do
+            if remote_capture ${node_ip[0]} "${command}" >/dev/null; then
+                success "etcd cluster started"
+                return 0
+            fi
+            sleep 5
+        done
+        error "etcd cluster failed to become ready on ${node_ip[0]}"
     else
         command="ETCDCTL_API=3 ${install_path}/bin/etcdctl \
 --cacert=${install_path}/etc/pki/etcd-ca.pem \
@@ -224,8 +250,8 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl restart kube-apiserver
-systemctl enable kube-apiserver"
+systemctl enable kube-apiserver
+systemctl restart kube-apiserver"
 
             if remote_exec ${i} "${command}"; then
                 success "${i} kube-apiserver service started"
@@ -291,8 +317,8 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl restart kube-apiserver
-systemctl enable kube-apiserver"
+systemctl enable kube-apiserver
+systemctl restart kube-apiserver"
 
             if remote_exec ${i} "${command}"; then
                 success "${i} kube-apiserver service started"
@@ -319,8 +345,8 @@ function config_containerd() {
 
     command2="sed -i '/^LimitCORE=infinity$/aLimitNOFILE=655360' /usr/local/lib/systemd/system/containerd.service
 systemctl daemon-reload
-systemctl restart containerd
-systemctl enable containerd"
+systemctl enable containerd
+systemctl restart containerd"
 
     command3="mkdir -p /opt/cni/bin && cp -r /usr/local/libexec/cni/* /opt/cni/bin/"
 
@@ -448,8 +474,8 @@ WantedBy=multi-user.target
 
 EOF
 systemctl daemon-reload
-systemctl restart kube-controller-manager
-systemctl enable kube-controller-manager"
+systemctl enable kube-controller-manager
+systemctl restart kube-controller-manager"
 
     for i in "${master_node[@]}"; do
         if remote_exec ${i} "${command}"; then
@@ -497,8 +523,8 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl restart kube-scheduler
-systemctl enable kube-scheduler"
+systemctl enable kube-scheduler
+systemctl restart kube-scheduler"
 
     for i in "${master_node[@]}"; do
         if remote_exec ${i} "${command}"; then
@@ -667,9 +693,9 @@ roleRef:
         fi
 
         resolv_file=/run/systemd/resolve/resolv.conf
-        result=$(remote_exec ${args[${i}]} "[ -f ${resolv_file} ] && echo '1' || echo '0'")
-        if [ "$result" -eq 1 ]; then
-            resolv_conf=/run/systemd/resolve/resolv.conf
+        result=$(remote_capture ${args[${i}]} "[ -f ${resolv_file} ] && echo '1' || echo '0'" | tail -n 1) || result=
+        if [ "$result" == "1" ]; then
+            resolv_conf=${resolv_file}
         else
             resolv_conf=/etc/resolv.conf
         fi
@@ -679,7 +705,7 @@ apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 address: 0.0.0.0
 port: 10250
-readOnlyPort: 10255
+readOnlyPort: 0
 authentication:
   anonymous:
     enabled: false
@@ -740,22 +766,23 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl restart kubelet
-systemctl enable kubelet"
+systemctl enable kubelet
+systemctl restart kubelet"
 
         if remote_exec ${args[${i}]} "${command}"; then
             success "${args[${i}]} kubelet service started"
         fi
     done
 
-    if [ "${args[*]}" == "${node_ip[*]}" ]; then
-        until ${pkg_path}/bin/kubectl get --kubeconfig ${run_path}/admin.kubeconfig csr | grep -c Approved,Issued | grep ${num}; do
-            ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get csr
+    # 仅安装全部节点时等待 CSR 签发与 Node 注册(addnode 场景不在此函数判断)
+    if [ "${args[*]}" == "${node_ip_hostname[*]}" ]; then
+        until [ "$(${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get csr | grep -c Approved,Issued)" -ge "${num}" ]; do
+            ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get csr || true
             sleep 2
         done
 
-        until ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node | grep -c -v '^NAME' | grep ${num}; do
-            ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node
+        until [ "$(${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node --no-headers | grep -c .)" -ge "${num}" ]; do
+            ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node || true
             sleep 2
         done
     fi
@@ -840,8 +867,8 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl restart kube-proxy
-systemctl enable kube-proxy"
+systemctl enable kube-proxy
+systemctl restart kube-proxy"
 
     for ((i = 0; i < num; i++)); do
         if remote_cp "${kube_proxy_kubeconfig}" "${args[${i}]}:${install_path}/etc/kube-proxy.kubeconfig"; then
@@ -881,8 +908,8 @@ function install_cni_plugin() {
         success "calico installed"
     fi
 
-    until ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node | grep -c Ready | grep ${#node_ip[@]}; do
-        ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node
+    until [ "$(${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node --no-headers | awk '$2 ~ /^Ready/ {count++} END {print count+0}')" -eq "${#node_ip[@]}" ]; do
+        ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node || true
         sleep 10
     done
     success "all k8s nodes are ready"

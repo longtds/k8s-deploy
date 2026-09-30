@@ -31,6 +31,11 @@
 * 配置部署节点root免密登录所有节点
 * 执行 ./deploy.sh install
 
+## bootstrap token
+* config.ini中kube_token留空时，首次install自动生成随机token并保存到pki/kube_token
+* 后续install/addnode复用该文件中的token，uninstall后文件删除，重新install会再生成
+* 如需自定义token，在config.ini中显式设置kube_token即可（注意勿使用公开已知的值）
+
 ## 节点增加
 * 修改config.ini文件中addnode_ip和addnode_hostname
 * 执行 ./deploy.sh addnode
