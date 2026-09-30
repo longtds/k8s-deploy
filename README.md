@@ -16,6 +16,13 @@
 * build.sh                离线包构建
 * Vagrantfile             测试环境快速构建
 
+## 目录结构
+* deploy.sh/build.sh/uninstall.sh 为入口，仅负责参数解析与执行流程编排
+* lib/ 按功能拆分函数库：common 输出与全局选项、remote 远程操作、preflight 预检、
+  system 系统调优、certs 证书、control-plane 控制面组件、node 节点组件、addons 集群插件、
+  build-* 构建阶段、uninstall 卸载阶段
+* config.ini 被各脚本 source，脚本须在仓库根目录执行
+
 ## 节点要求
 * 必需(缺失则中止安装): iptables socat ipset conntrack ip
 * nftables: 仅kubeproxy_mode=nftables时必需，且内核需 >= 5.13，缺失会导致kube-proxy无法启动
