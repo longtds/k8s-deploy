@@ -1,6 +1,6 @@
 .vscode
 .vagrant
-.ssh
+.trae
 hosts
 pkg
 info
