@@ -219,6 +219,11 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ' | ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig apply -f -
 
+    # 重跑 install 时校验节点上 kubelet 自动生成的 kubelet.kubeconfig 是否仍使用当前 CA;
+    # CA 失配(如曾重新签发)时 kubelet 无法通过 apiserver 认证, 删除后 kubelet 会通过
+    # bootstrap-kubeconfig 重新签发。
+    local_ca_sha=$(sha256sum ${pki_path}/ca.pem 2>/dev/null | awk '{print $1}')
+
     for ((i = 0; i < num; i++)); do
         if remote_cp "${kubelet_bootstrap_kubeconfig}" "${args[${i}]}:${conf_path}/kubelet-bootstrap.kubeconfig"; then
             success "${args[${i}]} kubelet-bootstrap synced"
@@ -297,6 +302,14 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 EOF
+# 校验 kubelet.kubeconfig 内嵌 CA 是否与当前 CA 一致, 失配则删除以强制重新签发
+if [ -f ${conf_path}/kubelet.kubeconfig ] && [ -n "${local_ca_sha}" ]; then
+    node_ca_sha=\$(awk '/certificate-authority-data:/{print \$2}' ${conf_path}/kubelet.kubeconfig | base64 -d 2>/dev/null | sha256sum | awk '{print \$1}')
+    if [ "\$node_ca_sha" != "${local_ca_sha}" ]; then
+        echo 'kubelet.kubeconfig CA mismatch, removing to force re-bootstrap'
+        rm -f ${conf_path}/kubelet.kubeconfig
+    fi
+fi
 systemctl daemon-reload
 systemctl enable kubelet
 systemctl restart kubelet"

@@ -40,16 +40,26 @@ function delete_resource() {
 
     max_retry=10
     retry_count=0
-    while kubectl get po -A | grep NAMESPACE; do
+    # 用 --no-headers 避免匹配表头 "NAMESPACE" 导致死循环; 仅在仍有 Pod 行时继续等待
+    while [ -n "$(kubectl get po -A --no-headers 2>/dev/null)" ]; do
         kubectl get po -A
         sleep 5
         retry_count=$((retry_count + 1))
         if [ ${retry_count} -ge ${max_retry} ]; then
-            kubectl delete pod --all --all-namespaces
-            kubectl delete pvc --all --all-namespaces
-            kubectl delete pv --all --all-namespaces
-            kubectl delete sc --all --all-namespaces
-            kubectl delete crd --all --all-namespaces
+            # 优雅删除超时: kubelet 失联时 Pod 会卡在 Terminating, 强制删除打破 finalizer
+            kubectl delete pod --all --all-namespaces --force --grace-period=0 2>/dev/null
+            kubectl delete pvc --all --all-namespaces 2>/dev/null
+            kubectl delete pv --all --all-namespaces 2>/dev/null
+            kubectl delete sc --all --all-namespaces 2>/dev/null
+            # calico 等 CRD 自带 finalizer, apiserver 下线后无法完成, 先清空 finalizer 再删除
+            kubectl patch crd --all -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null
+            kubectl delete crd --all --all-namespaces 2>/dev/null
+            # 宽限一轮后仍有残留则跳出, 防止卸载死循环
+            sleep 5
+            if [ -n "$(kubectl get po -A --no-headers 2>/dev/null)" ]; then
+                warn "some pods still exist after force delete, skip pod cleanup"
+                break
+            fi
         fi
     done
 }
@@ -58,7 +68,7 @@ function delete_service() {
     args=($@)
     num=$#
 
-    if remote_exec ${master_node[0]} "if ${bin_path}/nerdctl ps | grep registry; then ${bin_path}/nerdctl rm -f registry; fi"; then
+    if remote_exec_soft ${master_node[0]} "if ${bin_path}/nerdctl ps | grep registry; then ${bin_path}/nerdctl rm -f registry; fi"; then
         success "removed registry on ${master_node[0]}"
     fi
 
@@ -67,19 +77,19 @@ rm /usr/local/lib/systemd/system/{containerd.service,buildkit.service,stargz-sna
 systemctl daemon-reload"
 
     for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "if ${bin_path}/nerdctl ps | grep apiproxy; then ${bin_path}/nerdctl rm -f apiproxy; fi"; then
+        if remote_exec_soft ${args[${i}]} "if ${bin_path}/nerdctl ps | grep apiproxy; then ${bin_path}/nerdctl rm -f apiproxy; fi"; then
             success "removed apiproxy on ${args[${i}]}"
         fi
 
-        if remote_exec ${args[${i}]} "systemctl stop kubelet"; then
+        if remote_exec_soft ${args[${i}]} "systemctl stop kubelet"; then
             success "stoped kubelet on ${args[${i}]}"
         fi
 
-        if remote_exec ${args[${i}]} "systemctl stop containerd"; then
+        if remote_exec_soft ${args[${i}]} "systemctl stop containerd"; then
             success "stoped containerd on ${args[${i}]}"
         fi
 
-        if remote_exec ${args[${i}]} "${command1}"; then
+        if remote_exec_soft ${args[${i}]} "${command1}"; then
             success "delete services on ${args[${i}]}"
         fi
     done
@@ -88,27 +98,27 @@ systemctl daemon-reload"
 systemctl daemon-reload"
 
     for i in "${master_node[@]}"; do
-        if remote_exec ${i} "systemctl stop kube-scheduler"; then
+        if remote_exec_soft ${i} "systemctl stop kube-scheduler"; then
             success "stoped kube-scheduler on ${i}"
         fi
 
-        if remote_exec ${i} "systemctl stop kube-controller-manager"; then
+        if remote_exec_soft ${i} "systemctl stop kube-controller-manager"; then
             success "stoped kube-controller-manager on ${i}"
         fi
 
-        if remote_exec ${i} "systemctl stop kube-apiserver"; then
+        if remote_exec_soft ${i} "systemctl stop kube-apiserver"; then
             success "stoped kube-apiserver on ${i}"
         fi
 
-        if remote_exec ${i} "systemctl stop etcd"; then
+        if remote_exec_soft ${i} "systemctl stop etcd"; then
             success "stoped etcd on ${i}"
         fi
 
-        if remote_exec ${i} "rm ~/.kube -rf"; then
+        if remote_exec_soft ${i} "rm ~/.kube -rf"; then
             success "deleted kubeconfig on ${i}"
         fi
 
-        if remote_exec ${i} "${command2}"; then
+        if remote_exec_soft ${i} "${command2}"; then
             success "delete services on ${i}"
         fi
     done
@@ -123,7 +133,7 @@ rm /etc/{containerd,cni,crictl.yaml} -rf
 rm /etc/sysctl.d/kubernetes.conf -rf
 rm /etc/modules-load.d/kubernetes.conf -rf"
     for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
+        if remote_exec_soft ${args[${i}]} "${command}"; then
             success "deleted configs on ${args[${i}]}"
         fi
     done
@@ -137,7 +147,7 @@ function delete_bin() {
 rm /opt/{cni,containerd} -rf
 rm ${bin_path}/{kube-apiserver,kube-controller-manager,kube-scheduler,kubelet,kube-proxy,kubectl,k9s,cfssl,cfssljson,etcd,etcdctl} -rf"
     for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
+        if remote_exec_soft ${args[${i}]} "${command}"; then
             success "deleted bin files on ${args[${i}]}"
         fi
     done
@@ -150,7 +160,7 @@ function kill_process() {
     command="if ps -e | grep containerd; then ps -e | grep containerd | awk '{print \$1}' | xargs kill -9; fi
 if ps -e | grep kube; then ps -e | grep kube | awk '{print \$1}' | xargs kill -9; fi"
     for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
+        if remote_exec_soft ${args[${i}]} "${command}"; then
             success "killed containerd and kube process on ${args[${i}]}"
         fi
     done
@@ -163,7 +173,7 @@ function umount_path() {
     command="for mount in \$(df | grep kubelet | awk '{print \$6}');do umount \$mount;done
 for mount in \$(df | grep containerd | awk '{print \$6}');do umount \$mount;done"
     for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
+        if remote_exec_soft ${args[${i}]} "${command}"; then
             success "umounted paths on ${args[${i}]}"
         fi
     done
@@ -174,27 +184,27 @@ function delete_data() {
     num=$#
 
     for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "rm ${conf_path} -rf"; then
+        if remote_exec_soft ${args[${i}]} "rm ${conf_path} -rf"; then
             success "deleted cfg_path on ${args[${i}]}"
         fi
 
-        if remote_exec ${args[${i}]} "rm ${etcd_data_path} -rf"; then
+        if remote_exec_soft ${args[${i}]} "rm ${etcd_data_path} -rf"; then
             success "deleted etcd_data_path on ${args[${i}]}"
         fi
 
-        if remote_exec ${args[${i}]} "rm ${registry_data_path} -rf"; then
+        if remote_exec_soft ${args[${i}]} "rm ${registry_data_path} -rf"; then
             success "deleted registry_path on ${args[${i}]}"
         fi
 
-        if remote_exec ${args[${i}]} "rm /var/lib/cni -rf"; then
+        if remote_exec_soft ${args[${i}]} "rm /var/lib/cni -rf"; then
             success "deleted cni data on ${args[${i}]}"
         fi
 
-        if remote_exec ${args[${i}]} "rm /var/lib/{containerd,nerdctl} -rf"; then
+        if remote_exec_soft ${args[${i}]} "rm /var/lib/{containerd,nerdctl} -rf"; then
             success "deleted containerd data on ${args[${i}]}"
         fi
 
-        if remote_exec ${args[${i}]} "rm /var/lib/kubelet -rf"; then
+        if remote_exec_soft ${args[${i}]} "rm /var/lib/kubelet -rf"; then
             success "deleted kubelet data on ${args[${i}]}"
         fi
     done

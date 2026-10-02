@@ -23,6 +23,17 @@ else
     allnode_ip=(${node_ip[@]})
 fi
 
+# 过滤不可达节点(如未部署的 addnode 节点), 避免卸载流程中断
+online_ip=()
+for ip in ${allnode_ip[@]}; do
+    if ssh -i ${ssh_key} -p ${ssh_port} -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes ${ssh_user}@${ip} true 2>/dev/null; then
+        online_ip+=(${ip})
+    else
+        echo "skip unreachable node: ${ip}"
+    fi
+done
+allnode_ip=(${online_ip[@]})
+
 export KUBECONFIG=${run_path}/admin.kubeconfig
 
 delete_resource

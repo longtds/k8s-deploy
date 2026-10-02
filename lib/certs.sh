@@ -72,6 +72,12 @@ EOF
 EOF
 
     chmod 755 -R ${pkg_path}/bin
+    # 幂等保护: 证书已存在则跳过生成, 避免重跑 install 时重新签发 CA 导致集群组件证书失配
+    if [ -f ca.pem ] && [ -f etcd-ca.pem ] && [ -f kube-apiserver.pem ] && [ -f etcd.pem ] && [ -f sa.key ]; then
+        note "certificates already exist, skip generation"
+        cd ${run_path} || exit
+        return 0
+    fi
     if ${pkg_path}/bin/cfssl gencert -initca ca-csr.json | ${pkg_path}/bin/cfssljson -bare ca; then
         success "k8s ca certificate created"
     fi
