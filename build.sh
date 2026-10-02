@@ -36,6 +36,16 @@ fi
 
 host_arch=$(host_arch_name)
 
+# 容器运行时能力检测 (docker / nerdctl)
+detect_container_runtime
+
+# 代理透传: 构建机若已设置 http_proxy/https_proxy, docker/nerdctl 会自动使用
+# 如需指定代理, 执行 build.sh 前设置:
+#   export http_proxy=http://127.0.0.1:10808 https_proxy=http://127.0.0.1:10808
+if [ -n "${http_proxy:-}" ] || [ -n "${https_proxy:-}" ]; then
+    note "using proxy: http_proxy=${http_proxy:-} https_proxy=${https_proxy:-}"
+fi
+
 for i in ${build_arch[@]}; do
     h1 "build ${i}"
     load_config ${i}
