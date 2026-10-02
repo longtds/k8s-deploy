@@ -1,11 +1,8 @@
 ## 操作系统
-* Anolis OS: 23.3
-* Kylin OS: v11
-* OpenEuler: 24.03
-* UOS: V20-1070
-* RockyLinux: 9.7
+* RockyLinux: 10
+* RockyLinux: 9
 * Ubuntu: 24.04
-* Debian: 13.2
+* Ubuntu: 22.04
 
 ## 文件及命令
 * config.ini              集群配置文件
