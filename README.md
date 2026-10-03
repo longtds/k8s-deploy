@@ -1,6 +1,7 @@
 ## 操作系统
 * RockyLinux: 10
 * RockyLinux: 9
+* Debian: 13
 * Ubuntu: 24.04
 * Ubuntu: 22.04
 
