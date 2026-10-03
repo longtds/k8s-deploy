@@ -48,6 +48,22 @@ function config_system() {
     num=$#
     ((num /= 2))
 
+    # install offline system deps (若构建时未生成 deps 目录则自动跳过)
+    command="if [ -d /tmp/k8s-deps ]; then
+    if command -v dnf &>/dev/null && [ -d /tmp/k8s-deps/rhel ]; then
+        dnf install -y /tmp/k8s-deps/rhel/*.rpm
+    elif command -v apt-get &>/dev/null && [ -d /tmp/k8s-deps/deb ]; then
+        apt-get install -y -f /tmp/k8s-deps/deb/*.deb
+    fi
+    rm -rf /tmp/k8s-deps
+fi"
+
+    for ((i = 0; i < num; i++)); do
+        if remote_exec ${args[${i}]} "${command}"; then
+            success "${args[${i}]} offline deps installed"
+        fi
+    done
+
     # hostname
     for ((i = 0; i < num; i++)); do
         ((num2 = num + i))

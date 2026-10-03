@@ -22,6 +22,12 @@ function sync_pkg() {
             remote_exec ${args[${i}]} "${command1}"
             success "${args[${i}]} ${nerdctl_file} copied"
         fi
+
+        # 系统依赖离线包：rhel/deb 各一份, 部署时按目标系统类型选用
+        if remote_exec ${args[${i}]} "rm -rf /tmp/k8s-deps" &&
+            remote_cp "${pkg_path}/deps" "${args[${i}]}:/tmp/k8s-deps" -r; then
+            success "${args[${i}]} ${pkg_path}/deps copied"
+        fi
     done
 
     command3="mkdir -p ${registry_data_path} && tar xf /tmp/${image_file} -C ${registry_data_path} --strip-components=1"
