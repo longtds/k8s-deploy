@@ -92,7 +92,9 @@ EOF
 
     if command -v dnf &>/dev/null; then
       # rhel系 (rocky/anolis/openeuler/uos/kylin)
-      dnf install -y nftables iptables-nft socat ipset conntrack-tools iproute chrony
+      # 注意: Rocky 10 cloud box 内核缺少 ip_set/xt_conntrack 模块且仓库无匹配版本,
+      # 必须允许内核升级并在升级后重启, 否则 Calico/kube-proxy 无法运行
+      dnf install -y nftables iptables-nft socat ipset conntrack-tools iproute chrony kernel-modules-extra
     elif command -v apt-get &>/dev/null; then
       # debian系 (ubuntu/debian)
       apt-get update
@@ -144,7 +146,7 @@ EOF
     echo "prerequisites installed"
 
     # dnf/apt 可能升级内核, 若运行内核与已安装最新内核不一致则重启,
-    # 否则运行内核的 xt_conntrack 等模块文件缺失, kube-proxy 同步失败。
+    # 否则运行内核的 xt_conntrack/ip_set 等模块文件缺失, kube-proxy/Calico 同步失败。
     # Rocky/Anolis 云镜像内核包名为 kernel-core(非 kernel)。
     if command -v rpm &>/dev/null; then
       RUNNING=$(uname -r)
