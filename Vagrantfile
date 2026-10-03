@@ -5,7 +5,9 @@
 # BOX = "cloud-image/ubuntu-24.04"
 # BOX = "cloud-image/ubuntu-22.04"
 # BOX = "cloud-image/rocky-9"
+# BOX = "generic/rocky9"
 BOX = "cloud-image/rocky-10"
+# BOX = "cloud-image/debian-13"
 
 CPUS = 4
 MEM_MB = 4096
@@ -57,7 +59,8 @@ Vagrant.configure("2") do |config|
 
     # 5. Validate the configuration before reloading sshd
     sshd -t
-    systemctl reload sshd
+    # rhel系服务名为 sshd, debian系为 ssh
+    systemctl reload sshd 2>/dev/null || systemctl reload ssh
     echo "root access configured"
   SHELL
 
@@ -97,7 +100,16 @@ EOF
       dnf install -y nftables iptables-nft socat ipset conntrack-tools iproute chrony kernel-modules-extra
     elif command -v apt-get &>/dev/null; then
       # debian系 (ubuntu/debian)
-      apt-get update
+      # 关闭 deb-src 源码索引与 Translation 下载: apt 3.x(Debian 13)在无 swap 的
+      # 小内存 VM 上处理超大索引会 OOM(apt-get update 被 kill); sed 对非 deb822
+      # 格式源(旧版 sources.list)无匹配, 不影响 Ubuntu
+      sed -i 's/^Types: deb deb-src/Types: deb/' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+      # Debian 13 deb822 默认经 mirror+file 解析到 deb.debian.org, 国内环境极慢(几 KB/s),
+      # 替换为阿里云镜像; 仅匹配 .sources(Deb822) 格式, 旧版 Ubuntu 的 sources.list 不受影响
+      if grep -rql 'mirror+file:///etc/apt/mirrors/debian' /etc/apt/sources.list.d/*.sources 2>/dev/null; then
+        sed -i 's|mirror+file:///etc/apt/mirrors/debian.list|https://mirrors.aliyun.com/debian|; s|mirror+file:///etc/apt/mirrors/debian-security.list|https://mirrors.aliyun.com/debian-security|' /etc/apt/sources.list.d/*.sources
+      fi
+      apt-get update -o Acquire::Languages=none
       apt-get install -y nftables iptables socat ipset conntrack iproute2 chrony
     else
       echo "ERROR: unsupported OS, neither dnf nor apt-get found" >&2
