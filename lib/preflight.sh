@@ -40,11 +40,12 @@ function check_node_pkg() {
 
     # kube-proxy 配置模式取值校验：拼写错误会生成非法 kube-proxy 配置
     case "${kubeproxy_mode}" in
-    iptables | nftables) ;;
-    *) error "invalid kubeproxy_mode: '${kubeproxy_mode}', expect iptables or nftables (see config.ini)" ;;
+    iptables | nftables | ipvs) ;;
+    *) error "invalid kubeproxy_mode: '${kubeproxy_mode}', expect iptables, nftables or ipvs (see config.ini)" ;;
     esac
 
     # kube-proxy/CNI 运行期强依赖的系统命令，缺失会导致安装"成功"但集群不可用
+    # ipvs 模式同样依赖 ipset(kube-proxy 用其维护 ipvs 后端列表), 已在下方列表中
     node_bin_list=(iptables socat ipset conntrack ip)
     if [ "${kubeproxy_mode}" == "nftables" ]; then
         node_bin_list+=(nft)

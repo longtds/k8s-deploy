@@ -238,6 +238,11 @@ xt_mark
 xt_owner
 xt_tcpudp
 xt_multiport
+ip_vs
+ip_vs_rr
+ip_vs_wrr
+ip_vs_sh
+ip_vs_lc
 EOF
 systemctl daemon-reload
 systemctl restart systemd-modules-load.service"
