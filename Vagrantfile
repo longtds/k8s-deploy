@@ -2,11 +2,11 @@
 # vi: set ft=ruby :
 
 # 测试矩阵参数
-# BOX = "cloud-image/ubuntu-24.04"
+BOX = "cloud-image/ubuntu-24.04"
 # BOX = "cloud-image/ubuntu-22.04"
 # BOX = "cloud-image/rocky-9"
 # BOX = "generic/rocky9"
-BOX = "cloud-image/rocky-10"
+# BOX = "cloud-image/rocky-10"
 # BOX = "cloud-image/debian-13"
 
 CPUS = 4
