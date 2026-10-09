@@ -157,8 +157,17 @@ function kill_process() {
     args=($@)
     num=$#
 
-    command="if ps -e | grep containerd; then ps -e | grep containerd | awk '{print \$1}' | xargs kill -9; fi
-if ps -e | grep kube; then ps -e | grep kube | awk '{print \$1}' | xargs kill -9; fi"
+    # 精确匹配本工具部署的二进制全路径, 避免 `ps | grep kube` 误杀同名无关进程或 grep 自身
+    # pkill 无匹配返回 1, 整体用 || true 容忍
+    command="for p in \
+${bin_path}/kube-apiserver ${bin_path}/kube-controller-manager ${bin_path}/kube-scheduler \
+${bin_path}/kubelet ${bin_path}/kube-proxy ${bin_path}/etcd ${bin_path}/etcdctl ${bin_path}/cfssl; do
+    pkill -9 -f \"^\${p}\" 2>/dev/null || true
+done
+for p in /usr/local/bin/containerd /usr/local/bin/containerd-shim /usr/local/bin/nerdctl; do
+    pkill -9 -f \"^\${p}\" 2>/dev/null || true
+done
+true"
     for ((i = 0; i < num; i++)); do
         if remote_exec_soft ${args[${i}]} "${command}"; then
             success "killed containerd and kube process on ${args[${i}]}"

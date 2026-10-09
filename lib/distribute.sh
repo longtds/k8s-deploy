@@ -1,5 +1,21 @@
 # shellcheck shell=bash
 
+# 分发离线系统依赖包到节点 /tmp/k8s-deps, 必须先于 install_deps/check_node_pkg 执行
+# 旧版本离线包(未构建 deps 目录)时跳过, 不阻断部署
+function sync_deps() {
+    if [ ! -d "${pkg_path}/deps" ]; then
+        warn "${pkg_path}/deps not found, skip offline deps sync (nodes must have required packages preinstalled)"
+        return 0
+    fi
+
+    for host in "$@"; do
+        if remote_exec "${host}" "rm -rf /tmp/k8s-deps" &&
+            remote_cp "${pkg_path}/deps" "${host}:/tmp/k8s-deps" -r; then
+            success "${host} ${pkg_path}/deps copied"
+        fi
+    done
+}
+
 function sync_pkg() {
     args=($@)
     num=$#
@@ -21,12 +37,6 @@ function sync_pkg() {
         if remote_cp "${pkg_path}/tgz/${nerdctl_file}" "${args[${i}]}:/tmp/${nerdctl_file}"; then
             remote_exec ${args[${i}]} "${command1}"
             success "${args[${i}]} ${nerdctl_file} copied"
-        fi
-
-        # 系统依赖离线包：rhel/deb 各一份, 部署时按目标系统类型选用
-        if remote_exec ${args[${i}]} "rm -rf /tmp/k8s-deps" &&
-            remote_cp "${pkg_path}/deps" "${args[${i}]}:/tmp/k8s-deps" -r; then
-            success "${args[${i}]} ${pkg_path}/deps copied"
         fi
     done
 

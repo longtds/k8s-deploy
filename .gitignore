@@ -2,6 +2,7 @@
 .vagrant
 .trae
 hosts
+logs
 pkg
 info
 target

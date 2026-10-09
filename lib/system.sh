@@ -43,13 +43,10 @@ systemctl restart \"\$chrony_svc\""
     done
 }
 
-function config_system() {
-    args=($@)
-    num=$#
-    ((num /= 2))
-
-    # install offline system deps (若构建时未生成 deps 目录则自动跳过)
-    command="if [ -d /tmp/k8s-deps ]; then
+# 安装离线系统依赖(/tmp/k8s-deps 由 sync_deps 提前分发; 目录不存在时静默跳过)
+# 必须在 check_node_pkg 与 config_system 之前执行, 否则最小化系统会被预检拦截
+function install_deps() {
+    local command="if [ -d /tmp/k8s-deps ]; then
     if command -v dnf &>/dev/null && [ -d /tmp/k8s-deps/rhel ]; then
         dnf install -y /tmp/k8s-deps/rhel/*.rpm
     elif command -v apt-get &>/dev/null && [ -d /tmp/k8s-deps/deb ]; then
@@ -58,11 +55,17 @@ function config_system() {
     rm -rf /tmp/k8s-deps
 fi"
 
-    for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command}"; then
-            success "${args[${i}]} offline deps installed"
+    for host in "$@"; do
+        if remote_exec "${host}" "${command}"; then
+            success "${host} offline deps installed"
         fi
     done
+}
+
+function config_system() {
+    args=($@)
+    num=$#
+    ((num /= 2))
 
     # hostname
     for ((i = 0; i < num; i++)); do

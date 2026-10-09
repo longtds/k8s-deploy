@@ -4,17 +4,19 @@ function config_containerd() {
     args=($@)
     num=$#
 
-    command1="/usr/local/bin/containerd config default > /tmp/config.toml"
+    # 每次部署使用独立临时目录, 避免并发部署冲突或分发到上次运行的残留文件
+    local tmp_dir
+    tmp_dir=$(mktemp -d /tmp/k8s-containerd.XXXXXX)
 
-    if remote_exec ${args[0]} "${command1}"; then
-        if scp -i ${ssh_key} -P ${ssh_port} ${ssh_user}@${args[0]}:/tmp/config.toml /tmp/config.toml; then
-            sed -i -e "s#registry.k8s.io/pause#${registry}/k8s/pause#g" \
-                -e "s#level = ''#level = 'error'#g" \
-                -e "s#device_ownership_from_security_context = false#device_ownership_from_security_context = true#g" \
-                /tmp/config.toml
-            echo -e "server = \"https://${registry}\"\n\n[host.\"https://${registry}\"]\n  capabilities = [\"pull\", \"resolve\", \"push\"]\n  ca = \"${cert_path}/ca.pem\"" >/tmp/hosts.toml
-        fi
-    fi
+    command1="/usr/local/bin/containerd config default > /tmp/config.toml"
+    # 生成或拉取失败都会立即中止(remote_* 内部 error 退出), 不会带着陈旧文件继续分发
+    remote_exec ${args[0]} "${command1}"
+    remote_pull "${args[0]}" "/tmp/config.toml" "${tmp_dir}/config.toml"
+    sed -i -e "s#registry.k8s.io/pause#${registry}/k8s/pause#g" \
+        -e "s#level = ''#level = 'error'#g" \
+        -e "s#device_ownership_from_security_context = false#device_ownership_from_security_context = true#g" \
+        "${tmp_dir}/config.toml"
+    echo -e "server = \"https://${registry}\"\n\n[host.\"https://${registry}\"]\n  capabilities = [\"pull\", \"resolve\", \"push\"]\n  ca = \"${cert_path}/ca.pem\"" >"${tmp_dir}/hosts.toml"
 
     command2="sed -i '/^LimitCORE=infinity$/aLimitNOFILE=655360' /usr/local/lib/systemd/system/containerd.service
 systemctl daemon-reload
@@ -26,8 +28,8 @@ systemctl restart containerd"
     for ((i = 0; i < num; i++)); do
         if
             remote_exec ${args[${i}]} "mkdir -p /etc/containerd/certs.d/${registry}" &&
-                remote_cp /tmp/config.toml ${args[${i}]}:/etc/containerd/config.toml &&
-                remote_cp /tmp/hosts.toml ${args[${i}]}:/etc/containerd/certs.d/${registry}/hosts.toml
+                remote_cp "${tmp_dir}/config.toml" ${args[${i}]}:/etc/containerd/config.toml &&
+                remote_cp "${tmp_dir}/hosts.toml" ${args[${i}]}:/etc/containerd/certs.d/${registry}/hosts.toml
         then
             if remote_exec ${args[${i}]} "${command2}"; then
                 success "${args[${i}]} containerd service started"
@@ -38,6 +40,8 @@ systemctl restart containerd"
             fi
         fi
     done
+
+    rm -rf "${tmp_dir}"
 }
 
 function config_apiproxy() {
@@ -259,8 +263,8 @@ authorization:
 cgroupDriver: systemd
 cgroupsPerQOS: true
 clusterDNS:
-- 10.96.0.10
-clusterDomain: cluster.local
+- ${cluster_dns}
+clusterDomain: ${cluster_domain}
 resolvConf: ${resolv_conf}
 containerLogMaxFiles: 10
 containerLogMaxSize: 10Mi
@@ -320,16 +324,15 @@ systemctl restart kubelet"
     done
 
     # 仅安装全部节点时等待 CSR 签发与 Node 注册(addnode 场景不在此函数判断)
+    # 每步最长等待 5 分钟(150 x 2s), 超时输出现场后中止, 不再无限挂起
     if [ "${args[*]}" == "${node_ip_hostname[*]}" ]; then
-        until [ "$(${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get csr | grep -c Approved,Issued)" -ge "${num}" ]; do
-            ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get csr || true
-            sleep 2
-        done
+        wait_until "${num} CSRs approved/issued" 150 2 bash -c "
+            [ \"\$(${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get csr | grep -c Approved,Issued)\" -ge '${num}' ]
+        " || { ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get csr; error "CSR approval timeout"; }
 
-        until [ "$(${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node --no-headers | grep -c .)" -ge "${num}" ]; do
-            ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node || true
-            sleep 2
-        done
+        wait_until "${num} nodes registered" 150 2 bash -c "
+            [ \"\$(${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node --no-headers | grep -c .)\" -ge '${num}' ]
+        " || { ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node; error "node registration timeout"; }
     fi
 }
 
@@ -369,7 +372,7 @@ clientConnection:
   contentType: application/vnd.kubernetes.protobuf
   kubeconfig: ${conf_path}/kube-proxy.kubeconfig
   qps: 5
-clusterCIDR: 10.244.0.0/16
+clusterCIDR: ${cluster_cidr}
 configSyncPeriod: 15m0s
 conntrack:
   maxPerCore: 32768

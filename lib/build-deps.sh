@@ -40,7 +40,10 @@ function _make_deps_rhel() {
 
     if [ -n "${registry_proxy}" ]; then deps_image="${registry_proxy}/${deps_image}"; fi
 
-    if [ -d "${out_dir}" ] && [ -n "$(ls -A "${out_dir}" 2>/dev/null)" ]; then
+    # 基础镜像或包清单变化即重新下载(戳文件自身即完成标记, 成功下载后才写入)
+    local stamp="deps-rhel"
+    local stamp_file="${pkg_path}/.stamps/${stamp}"
+    if [ -f "${stamp_file}" ] && cache_valid "${stamp}" "${stamp_file}" "${deps_image}" "${deps_pkgs}" "${arch_name}"; then
         note "deps rhel exists"
         return 0
     fi
@@ -65,6 +68,7 @@ function _make_deps_rhel() {
         error "dnf download rhel deps failed"
     fi
 
+    cache_commit "${stamp}" "${deps_image}" "${deps_pkgs}" "${arch_name}"
     success "make deps rhel ($(ls "${out_dir}" | wc -l) pkgs)"
 }
 
@@ -75,7 +79,10 @@ function _make_deps_deb() {
 
     if [ -n "${registry_proxy}" ]; then deps_image="${registry_proxy}/${deps_image}"; fi
 
-    if [ -d "${out_dir}" ] && [ -n "$(ls -A "${out_dir}" 2>/dev/null)" ]; then
+    # 基础镜像或包清单变化即重新下载
+    local stamp="deps-deb"
+    local stamp_file="${pkg_path}/.stamps/${stamp}"
+    if [ -f "${stamp_file}" ] && cache_valid "${stamp}" "${stamp_file}" "${deps_image}" "${deps_pkgs}" "${arch_name}"; then
         note "deps deb exists"
         return 0
     fi
@@ -100,6 +107,7 @@ function _make_deps_deb() {
         error "apt download deb deps failed"
     fi
 
+    cache_commit "${stamp}" "${deps_image}" "${deps_pkgs}" "${arch_name}"
     success "make deps deb ($(ls "${out_dir}" | wc -l) pkgs)"
 }
 

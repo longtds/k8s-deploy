@@ -1,6 +1,26 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2068
 
+# 部署前配置校验: IP/主机名配对、网络配置完整性, 避免错误配置在流程中段才暴露
+function validate_config() {
+    [ ${#node_ip[@]} -gt 0 ] || error "node_ip is empty"
+    [ ${#node_ip[@]} -eq ${#node_hostname[@]} ] || error "node_ip and node_hostname count mismatch"
+    [ ${#addnode_ip[@]} -eq ${#addnode_hostname[@]} ] || error "addnode_ip and addnode_hostname count mismatch"
+
+    case "${kubeproxy_mode}" in
+    iptables | nftables | ipvs) ;;
+    *) error "invalid kubeproxy_mode: '${kubeproxy_mode}', expect iptables, nftables or ipvs" ;;
+    esac
+
+    local v
+    for v in service_cidr cluster_cidr cluster_dns cluster_domain; do
+        [ -n "${!v}" ] || error "config ${v} is empty (see config.ini)"
+    done
+
+    [ "${service_cidr}" != "${cluster_cidr}" ] || error "service_cidr and cluster_cidr must not be the same"
+    [[ "${cluster_dns}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || error "cluster_dns must be a valid IPv4 address"
+}
+
 function check_pkg() {
     pkg_bin_list=(cfssl cfssljson etcd etcdctl kube-apiserver kube-controller-manager kube-scheduler kubelet kube-proxy kubectl)
     pkg_yaml_list=(${coredns_file} ${localpath_file} ${metrics_file})
@@ -38,11 +58,7 @@ function check_node_pkg() {
     local node_bin_list pkg_failed check_failed host host_failed command check_out ssh_err missing missing_warn kver
     local miss_prefix="MISS_$$" warn_prefix="WARN_$$" kver_prefix="KVER_$$"
 
-    # kube-proxy 配置模式取值校验：拼写错误会生成非法 kube-proxy 配置
-    case "${kubeproxy_mode}" in
-    iptables | nftables | ipvs) ;;
-    *) error "invalid kubeproxy_mode: '${kubeproxy_mode}', expect iptables, nftables or ipvs (see config.ini)" ;;
-    esac
+    # kubeproxy_mode 取值校验已在 validate_config 中提前完成
 
     # kube-proxy/CNI 运行期强依赖的系统命令，缺失会导致安装"成功"但集群不可用
     # ipvs 模式同样依赖 ipset(kube-proxy 用其维护 ipvs 后端列表), 已在下方列表中
