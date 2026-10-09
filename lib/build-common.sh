@@ -72,8 +72,20 @@ function download() {
     local out="${download_path}/${file_name}"
 
     if [ -f "${out}" ]; then
-        note "${out} exists"
-        return 0
+        # 文件已存在: 若提供了 sha256 则验证是否匹配, 不匹配则重新下载
+        if [ -n "${sha256}" ]; then
+            local existing
+            existing=$(sha256sum "${out}" | awk '{print $1}')
+            if [ "${existing}" == "${sha256}" ]; then
+                note "${out} exists (sha256 verified)"
+                return 0
+            fi
+            warn "${out} exists but sha256 mismatch, re-downloading"
+            rm -f "${out}"
+        else
+            note "${out} exists"
+            return 0
+        fi
     fi
 
     note "download ${file_url}"

@@ -12,7 +12,7 @@ function config_containerd() {
     # 生成或拉取失败都会立即中止(remote_* 内部 error 退出), 不会带着陈旧文件继续分发
     remote_exec ${args[0]} "${command1}"
     remote_pull "${args[0]}" "/tmp/config.toml" "${tmp_dir}/config.toml"
-    sed -i -e "s#registry.k8s.io/pause#${registry}/k8s/pause#g" \
+    sed -i -e "s#registry.k8s.io/pause:[0-9.]*#${registry}/k8s/pause:${pause_version}#g" \
         -e "s#level = ''#level = 'error'#g" \
         -e "s#device_ownership_from_security_context = false#device_ownership_from_security_context = true#g" \
         "${tmp_dir}/config.toml"
