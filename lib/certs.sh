@@ -1,5 +1,21 @@
 # shellcheck shell=bash
 
+# 将主机名/IP 列表渲染为 CSR JSON 的 "hosts" 数组(自动跳过空值, 避免空 SAN 条目)
+function _json_hosts() {
+    local first=1 h
+    printf '"hosts": [\n'
+    for h in "$@"; do
+        [ -z "${h}" ] && continue
+        if [ ${first} -eq 1 ]; then
+            first=0
+        else
+            printf ',\n'
+        fi
+        printf '    "%s"' "${h}"
+    done
+    printf '\n  ]'
+}
+
 function config_certs() {
     if [ ! -d ${pki_path} ]; then
         mkdir -p ${pki_path}
@@ -85,17 +101,32 @@ EOF
         success "etcd ca certificate created"
     fi
 
-    if [ ${#node_ip[@]} -ge 3 ]; then
-        cat >etcd-csr.json <<EOF
+    # 各证书 SAN 列表统一从实际 master 数量派生, HA/非HA共用一套模板
+    local etcd_hosts_json apiserver_hosts_json registry_hosts_json service_api_ip svc_base
+    local -a etcd_hosts apiserver_hosts registry_hosts master_hostnames
+    local j
+    for ((j = 0; j < ${#master_node[@]}; j++)); do
+        etcd_hosts+=("${node_ip[${j}]}")
+        apiserver_hosts+=("${node_ip[${j}]}")
+        registry_hosts+=("${node_ip[${j}]}")
+        master_hostnames+=("${node_hostname[${j}]}")
+    done
+
+    # service_cidr 网段首个地址作为 apiserver Service ClusterIP(如 10.96.0.0/16 -> 10.96.0.1)
+    svc_base=${service_cidr%%/*}
+    service_api_ip=${svc_base%.*}.1
+
+    etcd_hosts_json=$(_json_hosts "localhost" "127.0.0.1" "${etcd_hosts[@]}")
+    apiserver_hosts_json=$(_json_hosts "localhost" "127.0.0.1" "${apiserver_hosts[@]}" \
+        "${master_hostnames[@]}" "${service_api_ip}" "kubernetes" "kubernetes.default" \
+        "kubernetes.default.svc" "kubernetes.default.svc.${cluster_domain%%.*}" \
+        "kubernetes.default.svc.${cluster_domain}")
+    registry_hosts_json=$(_json_hosts "${registry_hosts[@]}")
+
+    cat >etcd-csr.json <<EOF
 {
   "CN": "etcd",
-  "hosts": [
-    "localhost",
-    "127.0.0.1",
-    "${node_ip[0]}",
-    "${node_ip[1]}",
-    "${node_ip[2]}"
-  ],
+  ${etcd_hosts_json},
   "key": {
     "algo": "rsa",
     "size": 2048
@@ -111,57 +142,16 @@ EOF
   ]
 }
 EOF
-    else
-        cat >etcd-csr.json <<EOF
-{
-  "CN": "etcd",
-  "hosts": [
-    "localhost",
-    "127.0.0.1",
-    "${node_ip[0]}"
-  ],
-  "key": {
-    "algo": "rsa",
-    "size": 2048
-  },
-  "names": [
-    {
-      "C": "CN",
-      "ST": "Beijing",
-      "L": "Beijing",
-      "O": "etcd",
-      "OU": "etcd"
-    }
-  ]
-}
-EOF
-    fi
 
     if ${pkg_path}/bin/cfssl gencert -ca=etcd-ca.pem -ca-key=etcd-ca-key.pem -config=ca-config.json \
         -profile=kubernetes etcd-csr.json | ${pkg_path}/bin/cfssljson -bare etcd; then
         success "etcd server certificate created"
     fi
 
-    if [ ${#node_ip[@]} -ge 3 ]; then
-        cat >kube-apiserver-csr.json <<EOF
+    cat >kube-apiserver-csr.json <<EOF
 {
   "CN": "kubernetes",
-  "hosts": [
-    "localhost",
-    "127.0.0.1",
-    "${node_ip[0]}",
-    "${node_ip[1]}",
-    "${node_ip[2]}",
-    "${node_hostname[0]}",
-    "${node_hostname[1]}",
-    "${node_hostname[2]}",
-    "10.96.0.1",
-    "kubernetes",
-    "kubernetes.default",
-    "kubernetes.default.svc",
-    "kubernetes.default.svc.cluster",
-    "kubernetes.default.svc.cluster.local"
-  ],
+  ${apiserver_hosts_json},
   "key": {
     "algo": "rsa",
     "size": 2048
@@ -177,38 +167,6 @@ EOF
   ]
 }
 EOF
-    else
-        cat >kube-apiserver-csr.json <<EOF
-{
-  "CN": "kubernetes",
-  "hosts": [
-    "localhost",
-    "127.0.0.1",
-    "${node_ip[0]}",
-    "${node_hostname[0]}",
-    "10.96.0.1",
-    "kubernetes",
-    "kubernetes.default",
-    "kubernetes.default.svc",
-    "kubernetes.default.svc.cluster",
-    "kubernetes.default.svc.cluster.local"
-  ],
-  "key": {
-    "algo": "rsa",
-    "size": 2048
-  },
-  "names": [
-    {
-      "C": "CN",
-      "ST": "Beijing",
-      "L": "Beijing",
-      "O": "system:masters",
-      "OU": "system"
-    }
-  ]
-}
-EOF
-    fi
 
     if ${pkg_path}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json \
         -profile=kubernetes kube-apiserver-csr.json | ${pkg_path}/bin/cfssljson -bare kube-apiserver; then
@@ -226,7 +184,7 @@ EOF
   "names": [
     {
       "C": "CN",
-      "L": "Beijing", 
+      "L": "Beijing",
       "ST": "Beijing",
       "O": "system:masters",
       "OU": "system"
@@ -251,7 +209,7 @@ EOF
   "names": [
     {
       "C": "CN",
-      "L": "Beijing", 
+      "L": "Beijing",
       "ST": "Beijing",
       "O": "system:masters",
       "OU": "system"
@@ -344,11 +302,7 @@ EOF
     cat >registry-csr.json <<EOF
 {
   "CN": "registry",
-  "hosts": [
-    "${node_ip[0]}",
-    "${node_ip[1]}",
-    "${node_ip[2]}"
-  ],
+  ${registry_hosts_json},
   "key": {
     "algo": "rsa",
     "size": 2048
@@ -373,43 +327,63 @@ EOF
 }
 
 function sync_certs() {
-    args=($@)
-    num=$#
+    # master 需要控制面/etcd/签名所需的完整证书与私钥
+    local master_certs=(
+        ca.pem ca-key.pem
+        etcd-ca.pem etcd-ca-key.pem etcd.pem etcd-key.pem
+        kube-apiserver.pem kube-apiserver-key.pem
+        kube-controller-manager.pem kube-controller-manager-key.pem
+        kube-scheduler.pem kube-scheduler-key.pem
+        admin.pem admin-key.pem
+        kube-proxy.pem kube-proxy-key.pem
+        sa.key sa.pub
+        registry.pem registry-key.pem
+    )
+    # worker 仅信任集群 CA: kubelet/kube-proxy 身份凭证通过各自 kubeconfig 单独分发
+    local worker_certs=(ca.pem)
+    # 历史版本曾把整套 pki 推给所有节点, worker 接入时先清除残留私钥与多余证书
+    local worker_cleanup="cd ${cert_path} 2>/dev/null && rm -f \
+ca-key.pem etcd-ca.pem etcd-ca-key.pem etcd.pem etcd-key.pem \
+kube-apiserver.pem kube-apiserver-key.pem \
+kube-controller-manager.pem kube-controller-manager-key.pem \
+kube-scheduler.pem kube-scheduler-key.pem \
+admin.pem admin-key.pem kube-proxy.pem kube-proxy-key.pem \
+proxy-client.pem proxy-client-key.pem sa.key sa.pub \
+registry.pem registry-key.pem || true"
 
-    command1="mkdir -p ${cert_path}"
-
-    # Update ca-trust
-    command2="if [ -d /etc/pki/ca-trust ]; then
-    if update-ca-trust force-enable; then
-        \cp -f ${cert_path}/ca.pem /etc/pki/ca-trust/source/anchors/k8s-ca.pem
-        \cp -f ${cert_path}/etcd-ca.pem /etc/pki/ca-trust/source/anchors/etcd-ca.pem
-        update-ca-trust extract
-    else
-        cat ${cert_path}/ca.pem >>/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
-        cat ${cert_path}/etcd-ca.pem >>/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
-    fi
+    # Update ca-trust: 仅信任实际存在的 CA 文件(worker 没有 etcd-ca.pem)
+    local command_trust="if [ -d /etc/pki/ca-trust ]; then
+    update-ca-trust force-enable 2>/dev/null || true
+    [ -f ${cert_path}/ca.pem ] && \\cp -f ${cert_path}/ca.pem /etc/pki/ca-trust/source/anchors/k8s-ca.pem
+    [ -f ${cert_path}/etcd-ca.pem ] && \\cp -f ${cert_path}/etcd-ca.pem /etc/pki/ca-trust/source/anchors/etcd-ca.pem
+    update-ca-trust extract
 fi
 if [ -d /usr/local/share/ca-certificates ]; then
-    if [ ! -f /usr/local/share/ca-certificates/k8s.crt ];then
-        \cp -f ${cert_path}/ca.pem /usr/local/share/ca-certificates/k8s.crt
-        \cp -f ${cert_path}/etcd-ca.pem /usr/local/share/ca-certificates/etcd.crt
-        update-ca-certificates
-    fi
+    [ -f ${cert_path}/ca.pem ] && \\cp -f ${cert_path}/ca.pem /usr/local/share/ca-certificates/k8s.crt
+    [ -f ${cert_path}/etcd-ca.pem ] && \\cp -f ${cert_path}/etcd-ca.pem /usr/local/share/ca-certificates/etcd.crt
+    update-ca-certificates
 fi"
 
-    for ((i = 0; i < num; i++)); do
-        if remote_exec ${args[${i}]} "${command1}"; then
-            success "${args[${i}]} ${cert_path} created"
+    local host is_master m
+    for host in "$@"; do
+        is_master=0
+        for m in "${master_node[@]}"; do
+            [ "${host}" == "${m}" ] && is_master=1
+        done
+
+        remote_exec "${host}" "mkdir -p ${cert_path}"
+
+        if [ ${is_master} -eq 1 ]; then
+            remote_send_files "${host}" "${pki_path}" "${cert_path}" "${master_certs[@]}"
+            success "${host} control-plane certs synced"
+        else
+            remote_exec "${host}" "${worker_cleanup}"
+            remote_send_files "${host}" "${pki_path}" "${cert_path}" "${worker_certs[@]}"
+            success "${host} worker certs synced (CA only)"
         fi
 
-        if remote_cp "${pki_path}" "${args[${i}]}:${conf_path}" -r; then
-            success "${args[${i}]} pki copied"
-        fi
-
-        if remote_exec ${args[${i}]} "${command2}"; then
-            success "${args[${i}]} update-ca-trust"
+        if remote_exec "${host}" "${command_trust}"; then
+            success "${host} update-ca-trust"
         fi
     done
-
 }
-

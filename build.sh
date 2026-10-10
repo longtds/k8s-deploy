@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=all
 
-for f in lib/common.sh config.ini lib/build-common.sh lib/build-package.sh lib/build-image.sh; do
+for f in lib/common.sh config.ini lib/build-common.sh lib/build-package.sh lib/build-image.sh lib/build-deps.sh; do
     if [ -f "$f" ]; then
         source "$f"
     else
@@ -56,6 +56,7 @@ for i in ${build_arch[@]}; do
     make_registry
     make_haproxy
     make_image
+    make_deps
     make_config
     make_target
 done

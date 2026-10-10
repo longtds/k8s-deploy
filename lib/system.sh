@@ -43,6 +43,25 @@ systemctl restart \"\$chrony_svc\""
     done
 }
 
+# 安装离线系统依赖(/tmp/k8s-deps 由 sync_deps 提前分发; 目录不存在时静默跳过)
+# 必须在 check_node_pkg 与 config_system 之前执行, 否则最小化系统会被预检拦截
+function install_deps() {
+    local command="if [ -d /tmp/k8s-deps ]; then
+    if command -v dnf &>/dev/null && [ -d /tmp/k8s-deps/rhel ]; then
+        dnf install -y /tmp/k8s-deps/rhel/*.rpm
+    elif command -v apt-get &>/dev/null && [ -d /tmp/k8s-deps/deb ]; then
+        apt-get install -y -f /tmp/k8s-deps/deb/*.deb
+    fi
+    rm -rf /tmp/k8s-deps
+fi"
+
+    for host in "$@"; do
+        if remote_exec "${host}" "${command}"; then
+            success "${host} offline deps installed"
+        fi
+    done
+}
+
 function config_system() {
     args=($@)
     num=$#

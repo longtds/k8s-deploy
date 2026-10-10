@@ -53,6 +53,9 @@ fi
 if [ $# -eq 1 ]; then
     if [ $1 == "install" ]; then
         check_pkg
+        validate_config
+        sync_deps "${node_ip[@]}"
+        install_deps "${node_ip[@]}"
         check_node_pkg "${node_ip[@]}"
         config_certs
         config_system "${node_ip_hostname[@]}"
@@ -77,6 +80,9 @@ if [ $# -eq 1 ]; then
 
     if [ $1 == "addnode" ]; then
         check_pkg
+        validate_config
+        sync_deps "${addnode_ip[@]}"
+        install_deps "${addnode_ip[@]}"
         check_node_pkg "${addnode_ip[@]}"
         config_system "${addnode_ip_hostname[@]}"
         sync_hosts "${node_ip[@]}"

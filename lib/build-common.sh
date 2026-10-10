@@ -38,6 +38,30 @@ function load_config() {
 }
 
 # ---------------------------------------------------------------------------
+# 构建缓存版本戳:
+#   旧逻辑仅以"文件存在"作为跳过条件, config.ini 版本号升级后会复用旧产物。
+#   这里为每个产物保存一个由版本号/架构/源哈希构成的键, 键不匹配即重建。
+#   戳文件集中在 pkg/.stamps (打包时排除, 不进入离线包)。
+# ---------------------------------------------------------------------------
+function _cache_key() {
+    printf '%s\037' "$@" | sha256sum | awk '{print $1}'
+}
+
+function cache_valid() {
+    local name=$1 target=$2
+    shift 2
+    local stamp=${pkg_path}/.stamps/${name}
+    [ -f "${target}" ] && [ -f "${stamp}" ] && [ "$(cat "${stamp}")" == "$(_cache_key "$@")" ]
+}
+
+function cache_commit() {
+    local name=$1
+    shift
+    mkdir -p "${pkg_path}/.stamps"
+    _cache_key "$@" >"${pkg_path}/.stamps/${name}"
+}
+
+# ---------------------------------------------------------------------------
 # 下载: 重试 + 内容校验 + 可选 sha256 校验
 # ---------------------------------------------------------------------------
 function download() {
@@ -48,8 +72,20 @@ function download() {
     local out="${download_path}/${file_name}"
 
     if [ -f "${out}" ]; then
-        note "${out} exists"
-        return 0
+        # 文件已存在: 若提供了 sha256 则验证是否匹配, 不匹配则重新下载
+        if [ -n "${sha256}" ]; then
+            local existing
+            existing=$(sha256sum "${out}" | awk '{print $1}')
+            if [ "${existing}" == "${sha256}" ]; then
+                note "${out} exists (sha256 verified)"
+                return 0
+            fi
+            warn "${out} exists but sha256 mismatch, re-downloading"
+            rm -f "${out}"
+        else
+            note "${out} exists"
+            return 0
+        fi
     fi
 
     note "download ${file_url}"

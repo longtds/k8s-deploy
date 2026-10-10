@@ -6,10 +6,10 @@ function install_cni_plugin() {
         success "calico installed"
     fi
 
-    until [ "$(${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node --no-headers | awk '$2 ~ /^Ready/ {count++} END {print count+0}')" -eq "${#node_ip[@]}" ]; do
-        ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node || true
-        sleep 10
-    done
+    # 最长等待 15 分钟(90 x 10s), 超时带节点状态输出中止, 不再无限挂起
+    wait_until "all ${#node_ip[@]} k8s nodes ready" 90 10 bash -c "
+        [ \"\$(${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node --no-headers | awk '\$2 ~ /^Ready/ {count++} END {print count+0}')\" -eq '${#node_ip[@]}' ]
+    " || { ${pkg_path}/bin/kubectl --kubeconfig ${run_path}/admin.kubeconfig get node; error "nodes not all ready"; }
     success "all k8s nodes are ready"
 }
 
