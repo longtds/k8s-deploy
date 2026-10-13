@@ -429,23 +429,28 @@ systemctl restart kube-proxy"
     done
 }
 
+# registry 容器启动命令(带运行中守卫), 供安装与插件镜像同步共用
+function registry_container_cmd() {
+    cat <<EOF
+if ! /usr/local/bin/nerdctl ps | grep registry; then
+  /usr/local/bin/nerdctl run -d --net=host --name registry \\
+  -e REGISTRY_STORAGE_DELETE_ENABLED=true \\
+  -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/server.pem \\
+  -e REGISTRY_HTTP_TLS_KEY=/certs/server-key.pem \\
+  -v ${cert_path}/registry.pem:/certs/server.pem \\
+  -v ${cert_path}/registry-key.pem:/certs/server-key.pem \\
+  -v ${registry_data_path}:/var/lib/registry \\
+  --restart always registry:${registry_version}
+fi
+EOF
+}
+
 function config_registry() {
     if remote_exec ${node_ip[0]} "/usr/local/bin/nerdctl load -i /tmp/${registry_file}"; then
         success "${node_ip[0]} registry image loaded"
     fi
 
-    command="if ! /usr/local/bin/nerdctl ps | grep registry; then
-  /usr/local/bin/nerdctl run -d --net=host --name registry \
-  -e REGISTRY_STORAGE_DELETE_ENABLED=true \
-  -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/server.pem \
-  -e REGISTRY_HTTP_TLS_KEY=/certs/server-key.pem \
-  -v ${cert_path}/registry.pem:/certs/server.pem \
-  -v ${cert_path}/registry-key.pem:/certs/server-key.pem \
-  -v ${registry_data_path}:/var/lib/registry \
-  --restart always registry:${registry_version}
-fi"
-
-    if remote_exec ${node_ip[0]} "${command}"; then
+    if remote_exec ${node_ip[0]} "$(registry_container_cmd)"; then
         success "${node_ip[0]} registry service started"
     fi
 }

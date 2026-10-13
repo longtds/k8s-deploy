@@ -1,0 +1,11 @@
+# istio gateway chart 专用渲染参数。
+# gateway chart 启用严格 values schema, 不接受 meshConfig/pilot 等控制面键,
+# 控制面参数在 values.yaml 中(仅 base/istiod 渲染时生效)。
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+service:
+  type: ClusterIP
