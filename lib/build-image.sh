@@ -67,7 +67,7 @@ function make_image() {
     # 清理可能残留的构建用 registry 容器
     if image_ps | grep -q ":${registry_port}"; then
         warn "registry already running, remove it"
-        image_ps | grep ":${registry_port}" | awk '{print $1}' | xargs image_rm 2>/dev/null || true
+        image_ps | grep ":${registry_port}" | awk '{print $1}' | xargs -r ${CONTAINER_CLI} rm -f 2>/dev/null || true
     fi
 
     # 构建用 registry 容器需运行在构建机架构上, 与目标架构无关
@@ -114,7 +114,7 @@ function make_image() {
     fi
 
     # 停止构建用 registry 容器
-    image_ps | grep ":${registry_port}" | awk '{print $1}' | xargs image_rm 2>/dev/null || true
+    image_ps | grep ":${registry_port}" | awk '{print $1}' | xargs -r ${CONTAINER_CLI} rm -f 2>/dev/null || true
     sync
 
     # 打包 registry 数据目录为离线镜像包
