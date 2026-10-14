@@ -77,8 +77,10 @@ function make_yaml() {
 
     make_one_yaml "${localpath_file}" "${download_path}/${localpath_file}" \
         "${localpath_version}|${data_path}" \
-        "sed -e 's#image: rancher/#image: Placeholder_registry/k8s/#g' \
+        "sed -e 's#image: docker.io/rancher/#image: Placeholder_registry/k8s/#g' \
+            -e 's#image: rancher/#image: Placeholder_registry/k8s/#g' \
             -e 's#/opt/local-path-provisioner#${data_path}#g' \
+            -e 's#image: docker.io/library/busybox#image: Placeholder_registry/k8s/busybox#g' \
             -e 's#image: busybox#image: Placeholder_registry/k8s/busybox#g' \
             -e '/provisioner: rancher.io/i \\  annotations:\n\    defaultVolumeType: local' \
             ${download_path}/${localpath_file} >${pkg_path}/yaml/${localpath_file}" \
