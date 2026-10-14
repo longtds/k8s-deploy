@@ -2,7 +2,7 @@
 # shellcheck disable=SC2087,SC2086,SC2206,SC2016,SC1091,SC2154
 
 for f in lib/common.sh config.ini lib/remote.sh lib/preflight.sh lib/system.sh lib/certs.sh \
-    lib/distribute.sh lib/control-plane.sh lib/node.sh lib/addons.sh lib/plugin.sh; do
+    lib/distribute.sh lib/control-plane.sh lib/node.sh lib/addons.sh; do
     if [ -f "$f" ]; then
         source "$f"
     else
@@ -47,15 +47,7 @@ if [ $# -eq 0 ]; then
   Commands:
     install     Install the Kubernetes cluster.
     addnode     Adding nodes to the existing Kubernetes cluster.
-    plugin      Manage optional plugins: ./deploy.sh plugin list|install|remove|status [name]
     "
-fi
-
-# 可选插件管理(面向已部署集群): ./deploy.sh plugin <action> [name]
-if [ "$1" == "plugin" ]; then
-    shift
-    plugin_main "$@"
-    exit $?
 fi
 
 if [ $# -eq 1 ]; then
