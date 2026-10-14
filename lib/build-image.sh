@@ -48,8 +48,12 @@ function make_image() {
     h2 "make image"
     if [ ! -d ${pkg_path}/image ]; then mkdir -p ${pkg_path}/image; fi
 
-    # 任一内置组件版本变化都会使离线镜像包缓存失效
-    local image_cache_key="${registry_version}|${pause_version}|${calico_version}|${kubernetes_version}|${metrics_version}|${localpath_version}|${arch_name}"
+    # 任一内置组件版本或源清单内容变化都会使离线镜像包缓存失效
+    local src_hash
+    src_hash=$({ sha256sum "${download_path}/${calico_file}" "${download_path}/${coredns_file}.base" \
+        "${download_path}/${metrics_file}" "${download_path}/${localpath_file}"; } \
+        | sha256sum | awk '{print $1}')
+    local image_cache_key="${registry_version}|${pause_version}|${calico_version}|${kubernetes_version}|${metrics_version}|${localpath_version}|${arch_name}|${src_hash}"
     local image_target=${pkg_path}/image/${image_file}
     if [ -f "${image_target}" ] && cache_valid "image-bundle" "${image_target}" ${image_cache_key}; then
         note "${image_target} exists"

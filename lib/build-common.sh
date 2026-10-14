@@ -70,9 +70,10 @@ function download() {
     local sha256="${3:-}"
 
     local out="${download_path}/${file_name}"
+    local url_stamp="${out}.url"
 
     if [ -f "${out}" ]; then
-        # 文件已存在: 若提供了 sha256 则验证是否匹配, 不匹配则重新下载
+        # 文件已存在: 提供了 sha256 则校验内容是否匹配, 否则比对来源 URL
         if [ -n "${sha256}" ]; then
             local existing
             existing=$(sha256sum "${out}" | awk '{print $1}')
@@ -82,9 +83,14 @@ function download() {
             fi
             warn "${out} exists but sha256 mismatch, re-downloading"
             rm -f "${out}"
-        else
+        elif [ -f "${url_stamp}" ] && [ "$(cat "${url_stamp}")" == "${file_url}" ]; then
             note "${out} exists"
             return 0
+        else
+            # 部分清单文件名不含版本号(如 calico.yaml/metrics-server.yaml), 仅凭文件
+            # 存在无法判断版本是否变更; 记录来源 URL, URL 变化(升级版本)时重新下载
+            warn "${out} exists but source url changed, re-downloading"
+            rm -f "${out}"
         fi
     fi
 
@@ -117,6 +123,7 @@ function download() {
         success "sha256 verified ${file_name}"
     fi
 
+    printf '%s' "${file_url}" > "${url_stamp}"
     success "download ${file_name}"
 }
 
