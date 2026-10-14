@@ -231,9 +231,5 @@ function delete_local() {
     if [ -f ${run_path}/hosts ]; then
         rm ${run_path}/hosts -f && success "deleted hosts on localhost"
     fi
-
-    if [ -d ${run_path}/.plugin-stamps ]; then
-        rm ${run_path}/.plugin-stamps -rf && success "deleted plugin stamps on localhost"
-    fi
 }
 
