@@ -49,7 +49,7 @@
 * 执行 ./deploy.sh addnode
 
 ## 可选插件
-插件构建为target/下的独立离线包，按需安装到已部署完成的集群(当前内置 prometheus 监控栈、loki 日志栈、istio 服务网格)
+插件构建为target/下的独立离线包，按需安装到已部署完成的集群(当前内置 prometheus 监控栈、loki 日志栈、istio 服务网格、higress 云原生网关)
 * 构建: build.sh 默认同时构建主包与config.ini中build_plugins指定的插件包，
   产物如 target/plugin-prometheus-v<版本>-<日期>-<架构>.tgz
 * 安装: 将插件tgz拷贝到部署目录(k8s-deploy/)根目录解压，然后执行
@@ -63,6 +63,10 @@
   同时安装时自动在 Grafana 注册 Loki 数据源。
 * istio: istiod + ingress gateway(sidecar 注入模式)，独立 istio-system 命名空间；
   按需对业务命名空间执行 kubectl label ns <ns> istio-injection=enabled 启用注入。
+* higress: 云原生网关(gateway + controller + console)，独立 higress-system 命名空间；
+  gateway 为 NodePort，console 为 ClusterIP(默认账号 admin/higress，请登录后修改)。
+* 注意: higress 与 istio 插件互斥(同属 istio 控制面体系且共用
+  envoyfilters.networking.istio.io CRD)，安装时会被引擎拦截，需先卸载另一方。
 * 各插件使用独立命名空间，卸载互不影响；卸载集群时已安装插件会被自动优雅卸载。
 
 ## 卸载集群

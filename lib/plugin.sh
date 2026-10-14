@@ -7,7 +7,8 @@
 #                                      plugin_name/plugin_version/
 #                                      plugin_description/plugin_namespace/
 #                                      plugin_manifests=(...)
-#   plugins/<name>/hooks.sh           可选钩子: plugin_ready /
+#   plugins/<name>/hooks.sh           可选钩子: plugin_pre_install(失败的组合
+#                                      可在此拒绝安装) / plugin_ready /
 #                                      plugin_post_install / plugin_pre_remove
 #   plugins/<name>/manifests/*.yaml   构建期渲染好的静态清单(镜像占位符
 #                                      Placeholder_registry, 与核心组件一致)
@@ -244,6 +245,11 @@ function plugin_action_install() {
     local name=$1
     plugin_load "${name}" || return 1
     plugin_check_cluster || return 1
+
+    # 安装前自定义校验(如与已装插件互斥), 失败即中止安装
+    if declare -F plugin_pre_install >/dev/null 2>&1; then
+        plugin_pre_install || return 1
+    fi
 
     h1 "install plugin ${name} (${plugin_version})"
     plugin_sync_images "${name}" "${plugin_dir}/images/registry.tar"

@@ -60,7 +60,8 @@ function setup_helm_repos() {
     _helm repo add prometheus-community "${prometheus_chart_repo}" --force-update
     _helm repo add grafana "${loki_chart_repo}" --force-update
     _helm repo add istio "${istio_chart_repo}" --force-update
-    _helm repo update prometheus-community grafana istio
+    _helm repo add higress.io "${higress_chart_repo}" --force-update
+    _helm repo update prometheus-community grafana istio higress.io
 }
 
 # 拉取并解压 chart(版本戳缓存)
@@ -412,6 +413,44 @@ function build_plugin_istio() {
     finish_plugin "${name}" "${version}" "${version}|${values_hash}|${src_hash}|${arch_name}|${gw_hash}"
 }
 
+# ---------------------------------------------------------------------------
+# higress: 云原生网关(higress-core + higress-console umbrella chart)
+# ---------------------------------------------------------------------------
+function build_plugin_higress() {
+    h2 "plugin higress (higress ${higress_version})"
+    local name=higress version=${higress_version}
+    local src_dir=${root_path}/plugins/${name}
+    local pdst=${plugin_work_path}/${name}
+    local target=${target_path}/plugin-${name}-v${version}-$(date +%Y%m%d)-${arch_name}.tgz
+
+    local values_hash src_hash
+    values_hash=$(sha256sum "${src_dir}/values.yaml" | awk '{print $1}')
+    src_hash=$({ sha256sum "${src_dir}/plugin.conf" "${src_dir}/hooks.sh"; } | sha256sum | awk '{print $1}')
+    if [ -f "${target}" ] && cache_valid "plugin-${name}" "${target}" \
+        "${version}|${values_hash}|${src_hash}|${arch_name}"; then
+        note "${target} exists"
+        return 0
+    fi
+
+    # 父 chart 已内嵌子 chart(higress-core/higress-console), 拉取即为完整树
+    local chart_dir=${plugin_chart_path}/higress
+    pull_chart "higress.io/higress" "${version}" "${chart_dir}"
+
+    rm -rf "${pdst}" "${plugin_render_path}/${name}"
+    mkdir -p "${pdst}/manifests" "${pdst}/images" "${plugin_render_path}/${name}"
+    local rendered=${plugin_render_path}/${name}/rendered.yaml
+    render_chart higress "${chart_dir}" higress-system "${src_dir}/values.yaml" "${rendered}"
+
+    split_crds "${rendered}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-higress.yaml"
+    local map=${plugin_render_path}/${name}/image.map
+    build_image_map "${map}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-higress.yaml"
+    rewrite_images "${map}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-higress.yaml"
+
+    bundle_plugin_images "${name}" "${map}" "${pdst}/images/registry.tar"
+
+    finish_plugin "${name}" "${version}" "${version}|${values_hash}|${src_hash}|${arch_name}"
+}
+
 function make_plugins() {
     h1 "make optional plugins"
     init_plugin_paths
@@ -435,6 +474,9 @@ function make_plugins() {
             ;;
         istio)
             build_plugin_istio
+            ;;
+        higress)
+            build_plugin_higress
             ;;
         *)
             error "unknown plugin in build_plugins: ${name}"
