@@ -212,14 +212,16 @@ function image_tag() {
 }
 
 function image_push() {
-    ${CONTAINER_CLI} push "$1"
+    # containerd 多平台镜像库下, 同名 tag 可能同时含多个平台, 未指定平台时
+    # 会推成宿主架构; 显式指定目标架构, 只推送单平台镜像
+    ${CONTAINER_CLI} push --platform "linux/${arch_name}" "$1"
 }
 
-# 保存镜像为 tar
+# 保存目标架构的镜像为 tar (同样需要显式指定平台, 否则导出宿主架构)
 function image_save() {
     local image="$1"
     local out="$2"
-    ${CONTAINER_CLI} save "${image}" >"${out}"
+    ${CONTAINER_CLI} save --platform "linux/${arch_name}" "${image}" >"${out}"
 }
 
 # 加载镜像 tar

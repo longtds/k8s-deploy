@@ -12,7 +12,7 @@
 
 function _deps_container_cleanup() {
     image_ps | grep -q "k8s-deploy-deps-download" && \
-        image_ps | grep "k8s-deploy-deps-download" | awk '{print $1}' | xargs image_rm 2>/dev/null || true
+        image_ps | grep "k8s-deploy-deps-download" | awk '{print $1}' | xargs -r ${CONTAINER_CLI} rm -f 2>/dev/null || true
 }
 
 # 为容器注入宿主机代理环境变量，避免容器内无法访问外网
@@ -57,7 +57,7 @@ function _make_deps_rhel() {
 
     # 容器内使用 dnf download 下载包及其全部依赖到 /output
     # 注意: rockylinux 官方镜像使用默认 yum repo, 无需额外配置
-    if ! image_run --rm --name "k8s-deploy-deps-download-rhel" \
+    if ! image_run --rm --platform "linux/${arch_name}" --name "k8s-deploy-deps-download-rhel" \
         $(_deps_proxy_args) \
         -v "${out_dir}:/output" \
         "${deps_image}" \
@@ -95,7 +95,7 @@ function _make_deps_deb() {
     fi
 
     # 容器内使用 apt-get download 下载包及其全部依赖到 /output
-    if ! image_run --rm --name "k8s-deploy-deps-download-deb" \
+    if ! image_run --rm --platform "linux/${arch_name}" --name "k8s-deploy-deps-download-deb" \
         $(_deps_proxy_args) \
         -v "${out_dir}:/output" \
         "${deps_image}" \
