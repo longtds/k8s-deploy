@@ -1,0 +1,26 @@
+# istio helm 渲染参数(base/istiod/gateway 三个 chart 共用, 各自忽略无关键)。
+# 镜像 hub/tag 保持 chart 默认(与 istio_version 一致), 构建期统一改写到本地 registry。
+# 资源请求按 3 节点 4C4G 测试环境下调。
+global:
+  # 注入的 sidecar 默认 limits.memory=2Gi, 小内存环境统一降为 1Gi
+  proxy:
+    resources:
+      limits:
+        memory: 1Gi
+
+pilot:
+  # 测试环境单副本, 关闭 HPA
+  autoscaleEnabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+meshConfig:
+  # Pod 启动等待 sidecar 就绪, 避免应用启动初期连接被拒
+  defaultConfig:
+    holdApplicationUntilProxyStarts: true
+
+# gateway chart 的参数在 values-gateway.yaml(其 values schema 严格, 见该文件注释)

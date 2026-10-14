@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2087,SC2086,SC2206,SC2016,SC1091,SC2154
 
-for f in lib/common.sh config.ini lib/remote.sh lib/uninstall.sh; do
+for f in lib/common.sh config.ini lib/remote.sh lib/plugin.sh lib/uninstall.sh; do
     if [ -f "$f" ]; then
         source "$f"
     else
@@ -35,6 +35,9 @@ done
 allnode_ip=(${online_ip[@]})
 
 export KUBECONFIG=${run_path}/admin.kubeconfig
+
+# 先优雅卸载已安装的可选插件(如 prometheus 的 admission webhook/CRD), 避免通用强删挂起
+plugins_remove_all
 
 delete_resource
 delete_service "${allnode_ip[@]}"
