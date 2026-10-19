@@ -17,6 +17,9 @@ else
     master_node=(${node_ip[0]})
 fi
 
+# 插件清单渲染需替换镜像占位符, 与 deploy.sh 保持一致
+registry=${node_ip[0]}:5000
+
 if [ $1 == "all" ]; then
     allnode_ip=(${node_ip[@]} ${addnode_ip[@]})
 else

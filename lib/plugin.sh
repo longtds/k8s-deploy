@@ -205,7 +205,8 @@ function _plugin_pods_ready() {
 
     echo "${out}" | awk '{
         split($2,a,"/")
-        if (a[1]!=a[2] || ($3!="Running" && $3!="Succeeded")) bad++
+        if ($3=="Completed") next
+        if (a[1]!=a[2] || $3!="Running") bad++
     } END {exit (bad+0==0 ? 0 : 1)}'
 }
 
