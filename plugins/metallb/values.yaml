@@ -1,0 +1,13 @@
+# metallb helm 渲染参数(L2 模式)
+# 构建期由 lib/build-plugins.sh 执行 helm template 渲染为静态 yaml 并改写镜像到本地 registry。
+# frr-k8s 子 chart(默认启用)与 speaker frr sidecar 仅 BGP 场景需要, 关闭以精简离线包;
+# 如需 BGP 请调整 values 后重新构建。
+frrk8s:
+  enabled: false
+
+speaker:
+  frr:
+    enabled: false
+
+controller:
+  logLevel: info

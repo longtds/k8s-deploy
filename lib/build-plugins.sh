@@ -61,7 +61,11 @@ function setup_helm_repos() {
     _helm repo add grafana "${loki_chart_repo}" --force-update
     _helm repo add istio "${istio_chart_repo}" --force-update
     _helm repo add higress.io "${higress_chart_repo}" --force-update
-    _helm repo update prometheus-community grafana istio higress.io
+    _helm repo add jetstack "${cert_manager_chart_repo}" --force-update
+    _helm repo add metallb "${metallb_chart_repo}" --force-update
+    _helm repo add minio "${minio_chart_repo}" --force-update
+    _helm repo add velero "${velero_chart_repo}" --force-update
+    _helm repo update prometheus-community grafana istio higress.io jetstack metallb minio velero
 }
 
 # 拉取并解压 chart(版本戳缓存)
@@ -125,10 +129,10 @@ function split_crds() {
 function plugin_extract_images() {
     local yaml_file=$1
     {
-        grep -E '^[[:space:]]*image:[[:space:]]*[^[:space:]]' "${yaml_file}" \
-            | sed -e 's/^[[:space:]]*image:[[:space:]]*//'
-        grep -oE -- '--[a-z-]+=[a-z0-9.-]+[.:0-9]*/[a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+' "${yaml_file}" \
-            | sed -e 's/^--[a-z-]*=//'
+        grep -E '^[[:space:]]*(-[[:space:]]+)?image:[[:space:]]*[^[:space:]]' "${yaml_file}" \
+            | sed -e 's/^[[:space:]]*\(-[[:space:]]*\)\?image:[[:space:]]*//'
+        grep -oE -- '--[a-z0-9-]+=[a-z0-9.-]+[.:0-9]*/[a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+' "${yaml_file}" \
+            | sed -e 's/^--[a-z0-9-]*=//'
     } | sed -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//" \
         | grep -E '^[a-zA-Z0-9._-]+(/[a-zA-Z0-9._/-]+)*:[a-zA-Z0-9._-]+$' \
         | sort -u
@@ -451,6 +455,155 @@ function build_plugin_higress() {
     finish_plugin "${name}" "${version}" "${version}|${values_hash}|${src_hash}|${arch_name}"
 }
 
+# ---------------------------------------------------------------------------
+# cert-manager: TLS 证书自动签发(controller + webhook + cainjector)
+# ---------------------------------------------------------------------------
+function build_plugin_cert_manager() {
+    h2 "plugin cert-manager (cert-manager ${cert_manager_version})"
+    local name=cert-manager version=${cert_manager_version}
+    local src_dir=${root_path}/plugins/${name}
+    local pdst=${plugin_work_path}/${name}
+    local target=${target_path}/plugin-${name}-v${version}-$(date +%Y%m%d)-${arch_name}.tgz
+
+    local values_hash src_hash
+    values_hash=$(sha256sum "${src_dir}/values.yaml" | awk '{print $1}')
+    src_hash=$({ sha256sum "${src_dir}/plugin.conf" "${src_dir}/hooks.sh"; } | sha256sum | awk '{print $1}')
+    if [ -f "${target}" ] && cache_valid "plugin-${name}" "${target}" \
+        "${version}|${values_hash}|${src_hash}|${arch_name}"; then
+        note "${target} exists"
+        return 0
+    fi
+
+    # jetstack chart 版本号带 v 前缀(如 v1.21.2), config 中只存数字部分
+    local chart_dir=${plugin_chart_path}/cert-manager
+    pull_chart "jetstack/cert-manager" "v${version}" "${chart_dir}"
+
+    rm -rf "${pdst}" "${plugin_render_path}/${name}"
+    mkdir -p "${pdst}/manifests" "${pdst}/images" "${plugin_render_path}/${name}"
+    local rendered=${plugin_render_path}/${name}/rendered.yaml
+    render_chart cert-manager "${chart_dir}" cert-manager "${src_dir}/values.yaml" "${rendered}"
+
+    split_crds "${rendered}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-cert-manager.yaml"
+    local map=${plugin_render_path}/${name}/image.map
+    build_image_map "${map}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-cert-manager.yaml"
+    rewrite_images "${map}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-cert-manager.yaml"
+
+    bundle_plugin_images "${name}" "${map}" "${pdst}/images/registry.tar"
+
+    finish_plugin "${name}" "${version}" "${version}|${values_hash}|${src_hash}|${arch_name}"
+}
+
+# ---------------------------------------------------------------------------
+# metallb: 裸金属负载均衡(L2 模式, frrk8s/frr 已关闭)
+# ---------------------------------------------------------------------------
+function build_plugin_metallb() {
+    h2 "plugin metallb (metallb ${metallb_version})"
+    local name=metallb version=${metallb_version}
+    local src_dir=${root_path}/plugins/${name}
+    local pdst=${plugin_work_path}/${name}
+    local target=${target_path}/plugin-${name}-v${version}-$(date +%Y%m%d)-${arch_name}.tgz
+
+    local values_hash src_hash
+    values_hash=$(sha256sum "${src_dir}/values.yaml" | awk '{print $1}')
+    src_hash=$({ sha256sum "${src_dir}/plugin.conf" "${src_dir}/hooks.sh"; } | sha256sum | awk '{print $1}')
+    if [ -f "${target}" ] && cache_valid "plugin-${name}" "${target}" \
+        "${version}|${values_hash}|${src_hash}|${arch_name}"; then
+        note "${target} exists"
+        return 0
+    fi
+
+    local chart_dir=${plugin_chart_path}/metallb
+    pull_chart "metallb/metallb" "${version}" "${chart_dir}"
+
+    rm -rf "${pdst}" "${plugin_render_path}/${name}"
+    mkdir -p "${pdst}/manifests" "${pdst}/images" "${plugin_render_path}/${name}"
+    local rendered=${plugin_render_path}/${name}/rendered.yaml
+    render_chart metallb "${chart_dir}" metallb-system "${src_dir}/values.yaml" "${rendered}"
+
+    split_crds "${rendered}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-metallb.yaml"
+    local map=${plugin_render_path}/${name}/image.map
+    build_image_map "${map}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-metallb.yaml"
+    rewrite_images "${map}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-metallb.yaml"
+
+    bundle_plugin_images "${name}" "${map}" "${pdst}/images/registry.tar"
+
+    finish_plugin "${name}" "${version}" "${version}|${values_hash}|${src_hash}|${arch_name}"
+}
+
+# ---------------------------------------------------------------------------
+# minio: S3 兼容对象存储(standalone, velero 备份后端), 无 CRD
+# ---------------------------------------------------------------------------
+function build_plugin_minio() {
+    h2 "plugin minio (minio ${minio_version})"
+    local name=minio version=${minio_version}
+    local src_dir=${root_path}/plugins/${name}
+    local pdst=${plugin_work_path}/${name}
+    local target=${target_path}/plugin-${name}-v${version}-$(date +%Y%m%d)-${arch_name}.tgz
+
+    local values_hash src_hash
+    values_hash=$(sha256sum "${src_dir}/values.yaml" | awk '{print $1}')
+    src_hash=$({ sha256sum "${src_dir}/plugin.conf" "${src_dir}/hooks.sh"; } | sha256sum | awk '{print $1}')
+    if [ -f "${target}" ] && cache_valid "plugin-${name}" "${target}" \
+        "${version}|${values_hash}|${src_hash}|${arch_name}"; then
+        note "${target} exists"
+        return 0
+    fi
+
+    local chart_dir=${plugin_chart_path}/minio
+    pull_chart "minio/minio" "${version}" "${chart_dir}"
+
+    rm -rf "${pdst}" "${plugin_render_path}/${name}"
+    mkdir -p "${pdst}/manifests" "${pdst}/images" "${plugin_render_path}/${name}"
+    local rendered=${plugin_render_path}/${name}/rendered.yaml
+    render_chart minio "${chart_dir}" minio "${src_dir}/values.yaml" "${rendered}"
+
+    split_crds "${rendered}" "${plugin_render_path}/${name}/discard-crds.yaml" "${pdst}/manifests/10-minio.yaml"
+    local map=${plugin_render_path}/${name}/image.map
+    build_image_map "${map}" "${pdst}/manifests/10-minio.yaml"
+    rewrite_images "${map}" "${pdst}/manifests/10-minio.yaml"
+
+    bundle_plugin_images "${name}" "${map}" "${pdst}/images/registry.tar"
+
+    finish_plugin "${name}" "${version}" "${version}|${values_hash}|${src_hash}|${arch_name}"
+}
+
+# ---------------------------------------------------------------------------
+# velero: 集群备份/恢复(aws plugin -> minio S3, kopia 文件系统备份)
+# ---------------------------------------------------------------------------
+function build_plugin_velero() {
+    h2 "plugin velero (velero ${velero_version})"
+    local name=velero version=${velero_version}
+    local src_dir=${root_path}/plugins/${name}
+    local pdst=${plugin_work_path}/${name}
+    local target=${target_path}/plugin-${name}-v${version}-$(date +%Y%m%d)-${arch_name}.tgz
+
+    local values_hash src_hash
+    values_hash=$(sha256sum "${src_dir}/values.yaml" | awk '{print $1}')
+    src_hash=$({ sha256sum "${src_dir}/plugin.conf" "${src_dir}/hooks.sh"; } | sha256sum | awk '{print $1}')
+    if [ -f "${target}" ] && cache_valid "plugin-${name}" "${target}" \
+        "${version}|${values_hash}|${src_hash}|${arch_name}"; then
+        note "${target} exists"
+        return 0
+    fi
+
+    local chart_dir=${plugin_chart_path}/velero
+    pull_chart "velero/velero" "${version}" "${chart_dir}"
+
+    rm -rf "${pdst}" "${plugin_render_path}/${name}"
+    mkdir -p "${pdst}/manifests" "${pdst}/images" "${plugin_render_path}/${name}"
+    local rendered=${plugin_render_path}/${name}/rendered.yaml
+    render_chart velero "${chart_dir}" velero "${src_dir}/values.yaml" "${rendered}"
+
+    split_crds "${rendered}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-velero.yaml"
+    local map=${plugin_render_path}/${name}/image.map
+    build_image_map "${map}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-velero.yaml"
+    rewrite_images "${map}" "${pdst}/manifests/00-crds.yaml" "${pdst}/manifests/10-velero.yaml"
+
+    bundle_plugin_images "${name}" "${map}" "${pdst}/images/registry.tar"
+
+    finish_plugin "${name}" "${version}" "${version}|${values_hash}|${src_hash}|${arch_name}"
+}
+
 function make_plugins() {
     h1 "make optional plugins"
     init_plugin_paths
@@ -477,6 +630,18 @@ function make_plugins() {
             ;;
         higress)
             build_plugin_higress
+            ;;
+        cert-manager)
+            build_plugin_cert_manager
+            ;;
+        metallb)
+            build_plugin_metallb
+            ;;
+        minio)
+            build_plugin_minio
+            ;;
+        velero)
+            build_plugin_velero
             ;;
         *)
             error "unknown plugin in build_plugins: ${name}"

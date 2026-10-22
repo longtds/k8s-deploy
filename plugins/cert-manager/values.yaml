@@ -1,0 +1,16 @@
+# cert-manager helm 渲染参数
+# 构建期由 lib/build-plugins.sh 执行 helm template 渲染为静态 yaml 并改写镜像到本地 registry。
+crds:
+  enabled: true
+
+replicaCount: 1
+
+webhook:
+  replicaCount: 1
+
+cainjector:
+  replicaCount: 1
+
+global:
+  leaderElection:
+    namespace: cert-manager
