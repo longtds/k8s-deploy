@@ -62,6 +62,7 @@ if [ $# -eq 1 ]; then
     if [ $1 == "install" ]; then
         check_pkg
         validate_config
+        check_existing_docker "${node_ip[@]}"
         sync_deps "${node_ip[@]}"
         install_deps "${node_ip[@]}"
         check_node_pkg "${node_ip[@]}"
@@ -89,6 +90,7 @@ if [ $# -eq 1 ]; then
     if [ $1 == "addnode" ]; then
         check_pkg
         validate_config
+        check_existing_docker "${addnode_ip[@]}"
         sync_deps "${addnode_ip[@]}"
         install_deps "${addnode_ip[@]}"
         check_node_pkg "${addnode_ip[@]}"

@@ -139,15 +139,15 @@ function plugin_sync_images() {
     # 后按标准参数重建
     remote_exec "${host}" "mkdir -p ${registry_data_path} && \
 tar xf ${remote_tar} -C ${registry_data_path} --strip-components=1 && rm -f ${remote_tar} && \
-/usr/local/bin/nerdctl restart registry || { /usr/local/bin/nerdctl rm -f registry; $(registry_container_cmd); }"
+CONTAINERD_ADDRESS=${containerd_socket} /usr/local/bin/nerdctl restart registry || { CONTAINERD_ADDRESS=${containerd_socket} /usr/local/bin/nerdctl rm -f registry; $(registry_container_cmd); }"
 
     # registry 重启后等待容器恢复 Running
-    remote_exec "${host}" 'for i in $(seq 1 15); do
+    remote_exec "${host}" "CONTAINERD_ADDRESS=${containerd_socket} sh -c 'for i in \$(seq 1 15); do
   /usr/local/bin/nerdctl ps | grep -w registry | grep -q Up && exit 0
   sleep 2
 done
-echo "registry container not running after restart" >&2
-exit 1'
+echo \"registry container not running after restart\" >&2
+exit 1'"
 
     mkdir -p "${plugin_stamp_dir}"
     printf '%s\n' "${sum}" >"${plugin_stamp_dir}/${name}"

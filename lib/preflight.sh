@@ -124,3 +124,40 @@ echo ${kver_prefix}:\$(uname -r)"
         error "node dependency check failed"
     fi
 }
+
+# 检测节点是否已有 Docker/containerd 在运行, 提示共存注意事项
+# 当前部署使用独立 containerd root/state/service 与已有 Docker 隔离, 但:
+#   - /etc/containerd/config.toml 会被覆盖为 k8s containerd 配置
+#   - 卸载后 Docker 自带的 containerd 可能需要重新拉起 (被同名 service 抢占)
+function check_existing_docker() {
+    h2 "check existing docker/containerd"
+
+    local command docker_found host any_found=0
+
+    # 检测项: docker 二进制存在 / systemd containerd.service 活跃 / systemd docker.service 活跃
+    command="if command -v docker >/dev/null 2>&1; then echo DOCKER_BIN; fi
+if systemctl is-active --quiet containerd.service 2>/dev/null; then echo CONTAINERD_ACTIVE; fi
+if systemctl is-active --quiet docker.service 2>/dev/null; then echo DOCKER_ACTIVE; fi"
+
+    for host in "$@"; do
+        docker_found=""
+        if docker_found=$(ssh -o BatchMode=yes -o ConnectTimeout=10 -i ${ssh_key} -p ${ssh_port} \
+            ${ssh_user}@${host} "${command}" 2>/dev/null); then
+            if [ -n "${docker_found}" ]; then
+                any_found=1
+                warn "${host}: detected pre-existing container runtime (${docker_found//$'\n'/,})"
+            fi
+        fi
+    done
+
+    if [ ${any_found} -ne 0 ]; then
+        note "k8s containerd uses isolated paths (${containerd_root}, ${containerd_state})"
+        note "to coexist with Docker, but please be aware:"
+        note "  1. /etc/containerd/config.toml will be overwritten with k8s settings"
+        note "  2. Docker's containerd.service may be masked — after uninstall, run:"
+        note "     systemctl start containerd.service docker.service"
+        note "  3. Docker's container/ images/ volumes are NOT affected by k8s uninstall"
+    else
+        success "no existing docker/containerd detected"
+    fi
+}
