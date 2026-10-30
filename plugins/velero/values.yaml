@@ -1,0 +1,65 @@
+# velero helm 渲染参数(备份后端指向 minio 插件)
+# 构建期由 lib/build-plugins.sh 执行 helm template 渲染为静态 yaml 并改写镜像到本地 registry。
+# CRD 由框架随 00-crds.yaml 先行应用, 关闭 chart 自带 CRD 升级 Job(精简 kubectl 镜像)
+upgradeCRDs: false
+
+# local-path 不支持卷快照, 关闭 VolumeSnapshotLocation; PV 数据走 kopia 文件系统备份
+snapshotsEnabled: false
+
+image:
+  repository: velero/velero
+  tag: v1.18.2
+
+# S3(minio) 后端必需的 aws 插件(与 velero v1.18 配套)
+initContainers:
+  - name: velero-plugin-for-aws
+    image: velero/velero-plugin-for-aws:v1.14.4
+    imagePullPolicy: IfNotPresent
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+
+configuration:
+  backupStorageLocation:
+    - name: default
+      provider: aws
+      bucket: velero
+      default: true
+      config:
+        region: minio
+        s3ForcePathStyle: "true"
+        s3Url: http://minio.minio.svc.cluster.local:9000
+        publicUrl: http://minio.minio.svc.cluster.local:9000
+  uploaderType: kopia
+
+# 与 minio 插件 rootUser/rootPassword 联动, 修改后需同步
+credentials:
+  secretContents:
+    cloud: |
+      [default]
+      aws_access_key_id=minioadmin
+      aws_secret_access_key=Minio@2026
+
+# PV 文件系统备份 DaemonSet
+deployNodeAgent: true
+nodeAgent:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+# 不与 prometheus 插件产生 CRD 依赖(ServiceMonitor 需 prometheus-operator CRD)
+metrics:
+  serviceMonitor:
+    enabled: false
+  nodeAgentPodMonitor:
+    enabled: false

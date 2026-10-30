@@ -180,6 +180,21 @@ step_vagrant_up() {
     ok "node1 cluster SSH key works"
 }
 
+# ==================== Docker 共存标记 ====================
+
+# 在部署前启动 Docker 标记容器, 部署后验证仍存活
+step_docker_marker() {
+    log "启动 Docker 标记容器 (deploy 前)"
+    for ip in "${ALL_NODE_IPS[@]}"; do
+        if ssh ${SSH_OPTS} ${SSH_USER}@${ip} \
+            'docker run -d --name k8s-coexist-test --restart always alpine:3.20 sleep 36000 >/dev/null 2>&1 || docker start k8s-coexist-test 2>/dev/null || true; docker ps --filter name=k8s-coexist-test --format "{{.Names}} {{.Status}}"'; then
+            ok "${ip}: Docker marker started"
+        else
+            warn "${ip}: Docker marker failed, continuing anyway"
+        fi
+    done
+}
+
 # ==================== 部署 ====================
 
 step_deploy() {
@@ -277,7 +292,7 @@ step_health_check() {
         else
             # pause 镜像可能没有 nslookup, 用 node 上 dig/curl 替代
             local dig_out
-            dig_out=$(ssh ${SSH_OPTS} ${SSH_USER}@${NODE1_IP} 'echo "kubernetes.default" | /usr/local/bin/nerdctl run --rm --network host registry.k8s.io/coredns/coredns:latest -short 2>/dev/null || echo "skip"' 2>/dev/null || echo "skip")
+            dig_out=$(ssh ${SSH_OPTS} ${SSH_USER}@${NODE1_IP} 'echo "kubernetes.default" | CONTAINERD_ADDRESS=/run/containerd-k8s/containerd.sock /usr/local/bin/nerdctl run --rm --network host registry.k8s.io/coredns/coredns:latest -short 2>/dev/null || echo "skip"' 2>/dev/null || echo "skip")
             if [ "${dig_out}" != "skip" ] && echo "${dig_out}" | grep -qE '[0-9]+\.[0-9]+'; then
                 ok "DNS resolution via coredns container: ${dig_out}"
             else
@@ -430,7 +445,30 @@ YAML
         errors=$((errors + 1))
     fi
 
-    # --- 总结 ---
+    # --- 9. Docker 共存验证 ---
+    log "[9/9] Docker 与 k8s containerd 共存验证"
+    local docker_ok=0
+    for ip in "${ALL_NODE_IPS[@]}"; do
+        # Docker daemon 活跃
+        if ssh ${SSH_OPTS} ${SSH_USER}@${ip} 'systemctl is-active --quiet docker && docker ps --filter name=k8s-coexist-test --format "{{.Status}}" 2>/dev/null | grep -q Up' 2>/dev/null; then
+            docker_ok=$((docker_ok + 1))
+            ok "${ip}: Docker daemon + marker container still running"
+        else
+            fail "${ip}: Docker compromised or marker container lost"
+            ssh ${SSH_OPTS} ${SSH_USER}@${ip} 'echo "=== docker status ==="; systemctl status docker --no-pager 2>/dev/null | head -10; echo "=== docker ps ==="; docker ps -a 2>/dev/null | head -5; echo "=== containerd services ==="; systemctl list-units --type=service | grep containerd 2>/dev/null' 2>/dev/null || true
+            errors=$((errors + 1))
+        fi
+    done
+    # k8s 独立 containerd 验证
+    local k8s_ctrd_ok
+    k8s_ctrd_ok=$(ssh ${SSH_OPTS} ${SSH_USER}@${NODE1_IP} \
+        'systemctl is-active --quiet containerd-k8s && ls /var/lib/containerd-k8s/ 2>/dev/null | head -1 | grep -q . && echo OK || echo FAIL' 2>/dev/null)
+    if [ "${k8s_ctrd_ok}" == "OK" ]; then
+        ok "k8s containerd (containerd-k8s.service + /var/lib/containerd-k8s) 隔离正常"
+    else
+        fail "k8s containerd isolation broken"
+        errors=$((errors + 1))
+    fi
     echo
     if [ ${errors} -eq 0 ]; then
         ok "==================== 健康检查全部通过 ===================="
@@ -566,6 +604,7 @@ main() {
     step_prerequisites
     step_build
     step_vagrant_up
+    step_docker_marker
     step_deploy
 
     HEALTH_RC=0

@@ -171,6 +171,33 @@ EOF
     fi
   SHELL
 
+  # 测试 Docker 共存: 在所有节点预装 Docker, 部署 k8s 后应与独立 containerd 互不影响
+  config.vm.provision "install-docker-for-coexist-test", type: "shell", inline: <<-SHELL
+    set -euo pipefail
+    echo "========== Pre-installing Docker for coexist test =========="
+
+    if command -v docker &>/dev/null; then
+      echo "docker already installed, skipping"
+    else
+      if command -v apt-get &>/dev/null; then
+        # Debian/Ubuntu 系
+        apt-get update -o Acquire::Languages=none
+        DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io || \
+          (curl -fsSL https://get.docker.com | sh)
+      elif command -v dnf &>/dev/null; then
+        # RHEL/Rocky 系
+        dnf install -y docker || \
+          (curl -fsSL https://get.docker.com | sh)
+      fi
+    fi
+
+    if ! systemctl is-active --quiet docker; then
+      systemctl enable --now docker
+    fi
+    docker version --format 'Docker {{.Server.Version}}'
+    echo "========== Docker pre-installed =========="
+  SHELL
+
   NODES.each do |node|
     config.vm.define node[:name] do |vm|
       vm.vm.hostname = node[:name]

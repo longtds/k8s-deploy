@@ -68,16 +68,17 @@ function delete_service() {
     args=($@)
     num=$#
 
-    if remote_exec_soft ${master_node[0]} "if ${bin_path}/nerdctl ps | grep registry; then ${bin_path}/nerdctl rm -f registry; fi"; then
+    if remote_exec_soft ${master_node[0]} "if CONTAINERD_ADDRESS=${containerd_socket} ${bin_path}/nerdctl ps | grep registry; then CONTAINERD_ADDRESS=${containerd_socket} ${bin_path}/nerdctl rm -f registry; fi"; then
         success "removed registry on ${master_node[0]}"
     fi
 
     command1="rm ${systemd_path}/{kubelet.service,kube-proxy.service} -rf
+rm /etc/systemd/system/${containerd_service}.service -rf
 rm /usr/local/lib/systemd/system/{containerd.service,buildkit.service,stargz-snapshotter.service} -rf
 systemctl daemon-reload"
 
     for ((i = 0; i < num; i++)); do
-        if remote_exec_soft ${args[${i}]} "if ${bin_path}/nerdctl ps | grep apiproxy; then ${bin_path}/nerdctl rm -f apiproxy; fi"; then
+        if remote_exec_soft ${args[${i}]} "if CONTAINERD_ADDRESS=${containerd_socket} ${bin_path}/nerdctl ps | grep apiproxy; then CONTAINERD_ADDRESS=${containerd_socket} ${bin_path}/nerdctl rm -f apiproxy; fi"; then
             success "removed apiproxy on ${args[${i}]}"
         fi
 
@@ -85,7 +86,7 @@ systemctl daemon-reload"
             success "stoped kubelet on ${args[${i}]}"
         fi
 
-        if remote_exec_soft ${args[${i}]} "systemctl stop containerd"; then
+        if remote_exec_soft ${args[${i}]} "systemctl stop ${containerd_service}"; then
             success "stoped containerd on ${args[${i}]}"
         fi
 
@@ -180,7 +181,7 @@ function umount_path() {
     num=$#
 
     command="for mount in \$(df | grep kubelet | awk '{print \$6}');do umount \$mount;done
-for mount in \$(df | grep containerd | awk '{print \$6}');do umount \$mount;done"
+for mount in \$(df | grep -E 'containerd|${containerd_root}' | awk '{print \$6}');do umount \$mount;done"
     for ((i = 0; i < num; i++)); do
         if remote_exec_soft ${args[${i}]} "${command}"; then
             success "umounted paths on ${args[${i}]}"
@@ -209,8 +210,12 @@ function delete_data() {
             success "deleted cni data on ${args[${i}]}"
         fi
 
-        if remote_exec_soft ${args[${i}]} "rm /var/lib/{containerd,nerdctl} -rf"; then
+        if remote_exec_soft ${args[${i}]} "rm ${containerd_root} -rf"; then
             success "deleted containerd data on ${args[${i}]}"
+        fi
+
+        if remote_exec_soft ${args[${i}]} "rm /var/lib/nerdctl -rf"; then
+            success "deleted nerdctl data on ${args[${i}]}"
         fi
 
         if remote_exec_soft ${args[${i}]} "rm /var/lib/kubelet -rf"; then

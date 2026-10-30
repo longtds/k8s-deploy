@@ -12,16 +12,33 @@ function config_containerd() {
     # 生成或拉取失败都会立即中止(remote_* 内部 error 退出), 不会带着陈旧文件继续分发
     remote_exec ${args[0]} "${command1}"
     remote_pull "${args[0]}" "/tmp/config.toml" "${tmp_dir}/config.toml"
-    sed -i -e "s#registry.k8s.io/pause:[0-9.]*#${registry}/k8s/pause:${pause_version}#g" \
+    # 隔离 root/state/socket, 避免与已有 Docker 的 containerd 数据目录冲突
+    # containerd config.toml 默认用单引号; socket 路径是硬编码的, 必须显式替换
+    sed -i -e "s#^root = ['\"].*['\"]#root = '${containerd_root}'#" \
+        -e "s#^state = ['\"].*['\"]#state = '${containerd_state}'#" \
+        -e "s|/run/containerd/containerd.sock|${containerd_socket}|g" \
+        -e "s|/run/containerd/containerd.sock.ttrpc|${containerd_state}/containerd.sock.ttrpc|g" \
+        -e "s#registry.k8s.io/pause:[0-9.]*#${registry}/k8s/pause:${pause_version}#g" \
         -e "s#level = ''#level = 'error'#g" \
         -e "s#device_ownership_from_security_context = false#device_ownership_from_security_context = true#g" \
         "${tmp_dir}/config.toml"
     echo -e "server = \"https://${registry}\"\n\n[host.\"https://${registry}\"]\n  capabilities = [\"pull\", \"resolve\", \"push\"]\n  ca = \"${cert_path}/ca.pem\"" >"${tmp_dir}/hosts.toml"
 
-    command2="sed -i '/^LimitCORE=infinity$/aLimitNOFILE=655360' /usr/local/lib/systemd/system/containerd.service
+    # 基于 nerdctl-full 自带的 containerd.service 创建独立 unit, 避免与 Docker 的 containerd.service 冲突
+    # 操作目标放在 /etc/systemd/system/, systemd 会优先于此路径
+    command2="mkdir -p /etc/systemd/system
+cp /usr/local/lib/systemd/system/containerd.service /etc/systemd/system/${containerd_service}.service 2>/dev/null \\
+  || cp /usr/lib/systemd/system/containerd.service /etc/systemd/system/${containerd_service}.service
+# 移除 ExecStart 中的 --config 参数, 让 containerd 读取默认 /etc/containerd/config.toml
+sed -i 's# ExecStart=/usr/local/bin/containerd .*# ExecStart=/usr/local/bin/containerd#' /etc/systemd/system/${containerd_service}.service
+# 追加 LimitNOFILE 655360 (若 ExecStart 行已有 LimitCORE=infinity, 则追加到其后)
+grep -q 'LimitNOFILE' /etc/systemd/system/${containerd_service}.service || \\
+  sed -i '/^LimitCORE=infinity$/aLimitNOFILE=655360' /etc/systemd/system/${containerd_service}.service
+# 确保 containerd 独立 root/state 目录存在 (systemd 启动前)
+mkdir -p ${containerd_root} ${containerd_state}
 systemctl daemon-reload
-systemctl enable containerd
-systemctl restart containerd"
+systemctl enable ${containerd_service}
+systemctl restart ${containerd_service}"
 
     command3="mkdir -p /opt/cni/bin && cp -r /usr/local/libexec/cni/* /opt/cni/bin/"
 
@@ -49,8 +66,8 @@ function config_apiproxy() {
     num=$#
 
     if [ ${#master_node[@]} -eq 3 ]; then
-        command="if ! /usr/local/bin/nerdctl ps |grep apiproxy; then
-    /usr/local/bin/nerdctl load -i /tmp/${haproxy_file}
+        command="if ! CONTAINERD_ADDRESS=${containerd_socket} /usr/local/bin/nerdctl ps |grep apiproxy; then
+    CONTAINERD_ADDRESS=${containerd_socket} /usr/local/bin/nerdctl load -i /tmp/${haproxy_file}
     cat > ${conf_path}/haproxy.cfg <<EOF
 global
     maxconn 2000
@@ -89,7 +106,7 @@ backend k8s-master
     server  ${node_hostname[1]}  ${node_ip[1]}:6443 check
     server  ${node_hostname[2]}  ${node_ip[2]}:6443 check
 EOF
-    /usr/local/bin/nerdctl run -d --name apiproxy --net host --restart always \
+    CONTAINERD_ADDRESS=${containerd_socket} /usr/local/bin/nerdctl run -d --name apiproxy --net host --restart always \
     -v ${conf_path}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg haproxy:${haproxy_version}
 fi"
 
@@ -284,15 +301,15 @@ cat > ${systemd_path}/kubelet.service << EOF
 [Unit]
 Description=Kubernetes Kubelet
 Documentation=https://github.com/kubernetes/kubernetes
-After=containerd.service
-Requires=containerd.service
+After=${containerd_service}.service
+Requires=${containerd_service}.service
 
 [Service]
 ExecStart=${bin_path}/kubelet \
 --kubeconfig=${conf_path}/kubelet.kubeconfig \
 --bootstrap-kubeconfig=${conf_path}/kubelet-bootstrap.kubeconfig \
 --config=${conf_path}/kubelet-config.yml \
---container-runtime-endpoint=/run/containerd/containerd.sock \
+--container-runtime-endpoint=${containerd_socket} \
 --cert-dir=${cert_path} \
 --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 \
 --node-labels=node.kubernetes.io/node=
@@ -432,8 +449,8 @@ systemctl restart kube-proxy"
 # registry 容器启动命令(带运行中守卫), 供安装与插件镜像同步共用
 function registry_container_cmd() {
     cat <<EOF
-if ! /usr/local/bin/nerdctl ps | grep registry; then
-  /usr/local/bin/nerdctl run -d --net=host --name registry \\
+if ! CONTAINERD_ADDRESS=${containerd_socket} /usr/local/bin/nerdctl ps | grep registry; then
+  CONTAINERD_ADDRESS=${containerd_socket} /usr/local/bin/nerdctl run -d --net=host --name registry \\
   -e REGISTRY_STORAGE_DELETE_ENABLED=true \\
   -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/server.pem \\
   -e REGISTRY_HTTP_TLS_KEY=/certs/server-key.pem \\
@@ -446,7 +463,7 @@ EOF
 }
 
 function config_registry() {
-    if remote_exec ${node_ip[0]} "/usr/local/bin/nerdctl load -i /tmp/${registry_file}"; then
+    if remote_exec ${node_ip[0]} "CONTAINERD_ADDRESS=${containerd_socket} /usr/local/bin/nerdctl load -i /tmp/${registry_file}"; then
         success "${node_ip[0]} registry image loaded"
     fi
 

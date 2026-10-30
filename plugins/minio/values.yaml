@@ -1,0 +1,43 @@
+# minio helm 渲染参数(standalone 单节点, 作为 velero 的 S3 备份后端)
+# 构建期由 lib/build-plugins.sh 执行 helm template 渲染为静态 yaml 并改写镜像到本地 registry。
+mode: standalone
+replicas: 1
+
+# 官方 minio/mc 开源镜像已从 quay.io 与 docker hub 下线, 改用社区维护的 pgsty fork
+# (https://github.com/pgsty/minio), 镜像地址与版本在此显式覆盖
+image:
+  repository: pgsty/minio
+  tag: RELEASE.2026-08-04T00-00-00Z
+  pullPolicy: IfNotPresent
+mcImage:
+  repository: pgsty/mc
+  tag: RELEASE.2026-08-04T00-00-00Z
+  pullPolicy: IfNotPresent
+
+# 初始管理账号, 登录控制台后请尽快修改; velero 插件凭据与此联动, 需同步更新
+rootUser: minioadmin
+rootPassword: Minio@2026
+
+# 显式使用集群内置 local-path StorageClass
+persistence:
+  enabled: true
+  storageClass: local-path
+  size: 10Gi
+
+# 预创建 velero 备份桶(post-install Job, 使用 mc 镜像)
+buckets:
+  - name: velero
+    policy: none
+    purge: false
+
+service:
+  type: ClusterIP
+consoleService:
+  type: ClusterIP
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 1Gi

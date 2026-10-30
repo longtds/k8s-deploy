@@ -49,7 +49,7 @@
 * 执行 ./deploy.sh addnode
 
 ## 可选插件
-插件构建为target/下的独立离线包，按需安装到已部署完成的集群(当前内置 prometheus 监控栈、loki 日志栈、istio 服务网格、higress 云原生网关)
+插件构建为target/下的独立离线包，按需安装到已部署完成的集群(当前内置 prometheus 监控栈、loki 日志栈、istio 服务网格、higress 云原生网关、cert-manager 证书管理、metallb 负载均衡、minio 对象存储、velero 备份恢复)
 * 构建: build.sh 默认同时构建主包与config.ini中build_plugins指定的插件包，
   产物如 target/plugin-prometheus-v<版本>-<日期>-<架构>.tgz
 * 安装: 将插件tgz拷贝到部署目录(k8s-deploy/)根目录解压，然后执行
@@ -65,8 +65,21 @@
   按需对业务命名空间执行 kubectl label ns <ns> istio-injection=enabled 启用注入。
 * higress: 云原生网关(gateway + controller + console)，独立 higress-system 命名空间；
   gateway 为 NodePort，console 为 ClusterIP(默认账号 admin/higress，请登录后修改)。
+* cert-manager: 证书管理控制器，独立 cert-manager 命名空间；自动签发与续期
+  TLS 证书(支持 ACME/自签 CA 等 Issuer)，CRD 随插件一起安装。
+* metallb: 裸金属 LoadBalancer 实现，独立 metallb-system 命名空间；L2 模式
+  (frr-k8s 已关闭)，安装后需自行创建 IPAddressPool 与 L2Advertisement 资源
+  分配对外暴露的 IP 段。
+* minio: S3 兼容对象存储(standalone 单节点)，独立 minio 命名空间；
+  数据通过 local-path 持久化，预创建 velero 备份桶；console 为 ClusterIP
+  (默认账号 minioadmin/Minio@2026，请登录后修改)。
+  注: 官方 minio/mc 开源镜像已下线，插件使用社区维护的 pgsty/minio 镜像。
+* velero: 集群备份/恢复工具，独立 velero 命名空间；使用 aws 插件对接 minio
+  S3 后端，kopia 做文件系统备份，启用 node agent。依赖 minio 插件，
+  安装前会校验 minio 服务是否就绪。
 * 注意: higress 与 istio 插件互斥(同属 istio 控制面体系且共用
   envoyfilters.networking.istio.io CRD)，安装时会被引擎拦截，需先卸载另一方。
+* 注意: velero 依赖 minio，需先安装 minio 插件再安装 velero。
 * 各插件使用独立命名空间，卸载互不影响；卸载集群时已安装插件会被自动优雅卸载。
 
 ## 卸载集群
